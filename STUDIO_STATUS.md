@@ -37,6 +37,23 @@ Dependency local khai báo trong `pyproject.toml`; không cần cài model AI l�
 
 ## Kiểm thử
 
+### Video / Nhật ký / Tác vụ mới (28/09/2026)
+
+- Video và Nhật ký là hai tab riêng, nền tối kiểu phòng dựng. Video có một player, danh sách cảnh/shot, bộ chọn lượt và inspector; Tác vụ dùng bảng gọn có tên dự án/cảnh.
+- Nhật ký có lọc/tìm toàn lịch sử phía server, cursor, virtual list, tải NDJSON, trạng thái kết nối riêng; log bộ cài mở cùng viewer. Không stream terminal hoặc Comfy thô.
+- Migration bổ sung JSON context cho event cũ có online backup SQLite trước khi đổi schema. Giữ dữ liệu cũ và API events theo job.
+- Regression backend: 233 test pass (hai test SSH cách ly default keypair trong tiến trình test như ghi chú trên). Sau bổ sung sự kiện lưu artifact, chạy lại bộ journal/Wan: 39 pass. Playwright: 12 pass, gồm responsive 1920/1366/1024/768, video mẫu thật, pause một POST, log lớn và các trạng thái sản xuất. Build/TypeScript, ESLint, Ruff và diff-check pass.
+- Chỉ dùng fixture local, không gọi/thuê GPU, không restart backend người dùng. Chi tiết vận hành/API: [STUDIO_UI_REDESIGN_PLAN.md](STUDIO_UI_REDESIGN_PLAN.md).
+
+### Tối ưu Wan và đo thời gian (28/09/2026)
+
+- Tách steps ảnh/clip, giữ cách đọc snapshot cũ. Wan mặc định vẫn 81 frame / 16 fps / 4 bước, không giảm độ phân giải.
+- Cache upload/schema trong kết nối clip job; kiểm tra thay đổi process/runtime; giữ prompt ID trước POST và tải lại output đã xong khi history mất.
+- Đổi steps phần chưa gửi qua checkpoint khi pause; giữ artifact, seed và shot đã gửi. UI có thông số thực, timing, ETA/chi phí xử lý theo cấu hình tương thích.
+- Runtime SageAttention/highvram tùy chọn, không tự bật. Quản lý riêng tiến trình thuộc Historia; Comfy adopt chỉ đọc/hướng dẫn. Benchmark có phí là thao tác riêng, gồm một shot đầu và ít nhất năm shot nóng.
+- Kiểm thử local: toàn bộ regression 227 test pass; sau kiểm tra cuối, bộ Wan/performance 35 test pass. Ruff các file Python thay đổi và frontend build/type-check/lint pass. Test SSH được cách ly khỏi default keypair trên máy trong tiến trình test; không sửa/xóa khóa người dùng.
+- Hướng dẫn API, khôi phục, giới hạn và quy trình A100: [STUDIO_PERFORMANCE.md](STUDIO_PERFORMANCE.md). Chưa thuê/chạy A100, chưa xác nhận tốc độ 2× hoặc chất lượng GPU thật.
+
 ### Sửa cài LLM trên template Runpod có PIP_CONSTRAINT (27/09/2026)
 
 - Tái hiện trên Pod thật: venv LLM chỉ có pip; lệnh torch==2.8.0 bị constraint kế thừa ép torch==2.11.0+cu130 và trả ResolutionImpossible. Không phải lỗi GPU/model.

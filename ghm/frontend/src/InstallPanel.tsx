@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import HuggingFaceToken from './HuggingFaceToken';
+import RuntimePanel from './RuntimePanel';
 import { JobEvents } from './StudioControls';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -28,7 +29,7 @@ export default function InstallPanel(){
     <div className="alert warning">Dừng cài, render hoặc đóng web KHÔNG dừng tiền thuê GPU. Bộ cài đang ở giai đoạn nghiệm thu; không tự hạ chất lượng hoặc sửa driver.</div>
     <section className="panel"><label className="field"><span>Máy GPU cần cài</span><select value={selected} onChange={e=>setId(e.target.value)}><option value="">Chọn máy…</option>{hosts.data?.map(h=><option value={h.id} key={h.id}>{h.label} · {h.gpu?.name || h.address}</option>)}</select></label>{hosts.error && <p role="alert">{hosts.error.message}</p>}{!hosts.data?.length && <p>Thêm SSH và xác nhận fingerprint trong mục Kết nối GPU trước.</p>}</section>
     <HuggingFaceToken/>
-    {host && <HostInstall key={host.id} host={host}/>}
+    {host && <><HostInstall key={host.id} host={host}/><RuntimePanel key={`runtime-${host.id}`} hostId={host.id}/></>}
   </>;
 }
 

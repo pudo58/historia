@@ -212,9 +212,7 @@
       ],
       "filename_prefix": "studio/clip",
       "format": "mp4",
-      "codec": {
-        "codec": "h264"
-      }
+      "format.codec": "h264"
     }
   }
 }

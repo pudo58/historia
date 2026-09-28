@@ -11,13 +11,16 @@ from studio.models import Artifact, Installation, Job, JobEvent, Project
 from studio.packs import pack_info
 from studio.schemas import (
     Approval,
+    BenchmarkInput,
     CharacterInput,
     InstallConsent,
     JobInput,
     OutlineApproval,
-    ProjectInput,
+    PendingClipConfig,
     ProductionInput,
     ProductionRunInput,
+    ProjectInput,
+    RuntimeConfig,
     SceneInput,
     SceneUpdate,
     SourceUpdate,
@@ -27,6 +30,8 @@ from studio.schemas import (
 
 def router(service, jobs, host_lock):
     api = APIRouter(prefix="/api/studio")
+    from studio.event_log import router as journal_router
+    # Journal router has its own prefix; include below without double-prefixing.
 
     @api.get("/status")
     def status():
@@ -41,6 +46,30 @@ def router(service, jobs, host_lock):
     @api.get('/hosts/{id}/installation')
     def installation(id: str):
         return jobs.installations.state(id)
+
+    @api.get('/hosts/{id}/runtime')
+    def runtime_state(id: str):
+        return jobs.runtime.state(id)
+
+    @api.post('/hosts/{id}/runtime/inspect')
+    async def inspect_runtime(id: str):
+        async with host_lock(id):
+            return await jobs.runtime.inspect(id)
+
+    @api.post('/hosts/{id}/runtime/apply')
+    async def apply_runtime(id: str, payload: RuntimeConfig):
+        async with host_lock(id):
+            return jobs.runtime.start(id, payload.model_dump())
+
+    @api.post('/hosts/{id}/runtime/install-sage')
+    async def install_sage(id: str, payload: RuntimeConfig):
+        async with host_lock(id):
+            return jobs.runtime.start(id, payload.model_dump(), 'install-sage')
+
+    @api.post('/hosts/{id}/runtime/recover')
+    async def recover_runtime(id: str, payload: RuntimeConfig):
+        async with host_lock(id):
+            return jobs.runtime.start(id, payload.model_dump(), 'recover')
 
     @api.post('/hosts/{id}/installation/discover')
     async def discover_installation(id: str):
@@ -178,6 +207,21 @@ def router(service, jobs, host_lock):
     def production_runs(id: str):
         return jobs.runs.list(id)
 
+    @api.get('/projects/{id}/performance')
+    def project_performance(id: str, run_id: str | None = None):
+        from studio.performance import performance
+        return performance(jobs, id, run_id)
+
+    @api.post('/projects/{id}/benchmarks', status_code=201)
+    def start_benchmark(id: str, payload: BenchmarkInput):
+        from studio.benchmark import start
+        return start(jobs, id, payload)
+
+    @api.get('/benchmarks/compare')
+    def compare_benchmarks(baseline_id: str, candidate_id: str):
+        from studio.benchmark import compare
+        return compare(jobs, baseline_id, candidate_id)
+
     @api.post('/projects/{id}/production-runs', status_code=201)
     def create_production_run(id: str, payload: ProductionRunInput):
         return jobs.runs.create(id, payload)
@@ -197,6 +241,14 @@ def router(service, jobs, host_lock):
     @api.post('/production-runs/{id}/accept-duration')
     def accept_production_duration(id: str):
         return jobs.runs.action(id, 'accept-duration')
+
+    @api.post('/production-runs/{id}/pending-clip-config')
+    def configure_run_clips(id: str, payload: PendingClipConfig):
+        return jobs.configure_pending(payload.model_dump(), run_id=id)
+
+    @api.post('/jobs/{id}/pending-clip-config')
+    def configure_job_clips(id: str, payload: PendingClipConfig):
+        return jobs.configure_pending(payload.model_dump(), job_id=id)
 
     @api.get("/jobs")
     def list_jobs(project_id: str | None = None):
@@ -246,4 +298,7 @@ def router(service, jobs, host_lock):
                             content_disposition_type="inline" if inline and not download else "attachment",
                             headers={"Content-Security-Policy": "default-src 'none'; sandbox"})
 
-    return api
+    root = APIRouter()
+    root.include_router(api)
+    root.include_router(journal_router(service))
+    return root

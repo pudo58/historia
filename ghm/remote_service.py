@@ -27,7 +27,18 @@ def alive_owned():
     return pid
 
 pid = alive_owned()
-if action == "stop":
+if action == "inspect-stopped":
+    if pid or not marker.exists():
+        raise RuntimeError("Expected a stopped, previously owned service.")
+    data = json.loads(marker.read_text())
+    if data.get("argv", [])[:2] != [str(python), str(comfy / 'main.py')]:
+        raise RuntimeError("Stopped service ownership mismatch.")
+    print(json.dumps({"owned": True, "stopped": True, "argv": data['argv']}))
+elif action == "inspect":
+    if not pid:
+        raise RuntimeError("No live owned ComfyUI process; refusing runtime maintenance.")
+    print(json.dumps({"owned": True, "pid": pid, "argv": json.loads(marker.read_text())['argv']}))
+elif action == "stop":
     if pid:
         os.kill(pid, signal.SIGTERM)
         for _ in range(100):
@@ -64,7 +75,7 @@ async def manage(executor, options, action: str, args: list[str]):
         raise ValueError("Adopt mode never starts/stops an externally managed process.")
     result = await executor.run_input(
         "python3 -c " + shlex.quote(SCRIPT),
-        json.dumps(dict(root=options.root, port=options.remote_port, args=args, action=action)),
+        json.dumps({'root': options.root, 'port': options.remote_port, 'args': args, 'action': action}),
         timeout=30,
     )
     if result.rc:

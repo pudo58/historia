@@ -130,10 +130,10 @@
 .studio .job-events small { color: var(--muted); }
 .studio .job-progress { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
 .studio .job-row .queue-position { color: #4338ca; font-weight: 600; }
-.studio .status-running { border-left: 4px solid #6366f1; }
-.studio .status-queued { border-left: 4px solid #94a3b8; }
-.studio .status-failed, .studio .status-interrupted { border-left: 4px solid #dc7990; }
-.studio .status-completed { border-left: 4px solid #3ba37b; }
+.studio .job-row.status-running { border-left: 4px solid #6366f1; }
+.studio .job-row.status-queued { border-left: 4px solid #94a3b8; }
+.studio .job-row.status-failed, .studio .job-row.status-interrupted { border-left: 4px solid #dc7990; }
+.studio .job-row.status-completed { border-left: 4px solid #3ba37b; }
 .studio .action-help { padding: 12px 16px; background: #f4f6fb; border-radius: 8px; color: #52647b; }
 .studio .studio-content, .studio .workspace, .studio .scene-body { min-width: 0; }
 .studio .page-heading h1, .studio .project-description h2 { overflow-wrap: anywhere; }
@@ -141,7 +141,7 @@
 @media(max-width:600px) { .studio .task-filters { grid-template-columns: 1fr; gap: 0; } .studio .confirm-dialog { padding: 20px; } .studio .topbar { font-size: 11px; } .studio .project-grid, .studio .source-grid { grid-template-columns: minmax(0,1fr); } .studio .gpu-manager article > .flex { width: 100%; } }
 @media(max-width: 1000px) { .studio .sidebar { width: 220px; } .studio .workspace { margin-left: 220px; } .studio .studio-content { padding: 24px; } }
 @media(max-width: 800px) { .studio .sidebar { width: auto; position: static; padding: 16px; } .studio .workspace { margin-left: 0; } .studio .studio-content { padding: 18px; } .studio .sidebar nav { gap: 8px; } .studio .sidebar nav button { padding: 10px; } .studio .topbar { padding: 0 18px; height: 60px; } .studio .panel, .studio .job-row { padding: 18px; } .studio .job-results { grid-template-columns: 1fr; } }
-.studio .primary-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }
+.studio .primary-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
 .studio .primary-steps button[aria-selected="true"] { background: #203d36; color: white; border-radius: 8px; }
 .studio .output-settings { border: 1px solid #d8dedb; padding: 18px; border-radius: 12px; }
 .studio .aspect-preview { width: min(180px,100%); max-height: 240px; background: #203d36; color: white; display: grid; place-items: center; border-radius: 6px; text-align: center; padding: 8px; }

@@ -9,14 +9,18 @@ from sqlalchemy import select, text
 
 from studio.media import probe
 from studio.models import Job, ProductionRun, Scene
+from studio.packs import load_graph
 from studio.schemas import SceneInput
 from studio.service import canonical_hash
-from studio.packs import load_graph
 
 LIVE = {'running', 'pause_requested', 'paused', 'duration_review', 'reconciling', 'failed'}
 
 
 def dependency_identity(project, scene, kind):
+    from studio.formats import resolve_format
+    from studio.generation import identity_scene
+    if scene:
+        scene = identity_scene(scene, kind)
     if kind == 'speech':
         return {'narration': scene['narration'], 'voice': project['voice'],
                 'pronunciation': project.get('pronunciation', '')}
@@ -27,7 +31,8 @@ def dependency_identity(project, scene, kind):
         for character in characters:
             refs.update(character.get('reference_ids', []))
         value = {'scene': {k: scene.get(k) for k in ('visual_prompt', 'camera', 'seed', 'steps')},
-                 'settings': {k: project.get(k) for k in ('style', 'era', 'location', 'aspect_ratio', 'output_resolution')},
+                 'settings': {k: project.get(k) for k in ('style', 'era', 'location', 'aspect_ratio')},
+                 'render_size': resolve_format(project.get('quality', 'draft'), project)['render_size'],
                  'render_profile': project.get('render_profile') or ('standard' if project.get('quality') == 'final' else 'draft'),
                  'characters': characters, 'references': [s for s in project['sources'] if s['id'] in refs]}
         if kind == 'clip':
@@ -281,6 +286,9 @@ class ProductionRuns:
                         'scene_id': scene['id'] if scene else None, 'host': project.get('host_id') if kind != 'export' else None,
                         'inputs': dependency_identity(project, scene, kind), 'workflow': workflow})
                     existing = session.scalar(select(Job).where(Job.input_hash == hashed, Job.status == 'completed').order_by(Job.created_at.desc()))
+                    from studio.generation import clip_output_matches
+                    if existing and kind == 'clip' and not clip_output_matches(existing, project, scene):
+                        existing = None
                     output = (existing.result if kind == 'export' else existing.result.get('production_output', {})) if existing else {}
                     if not existing and scene and kind != 'export':
                         # Reuse legacy media only with a completed job snapshot proving
@@ -289,7 +297,7 @@ class ProductionRuns:
                         ids = scene.get('clip_ids', []) if kind == 'clip' else [scene.get('speech_id' if kind == 'speech' else 'keyframe_id')]
                         artifact = session.get(Artifact, ids[0]) if ids and ids[0] else None
                         legacy = session.get(Job, artifact.job_id) if artifact and artifact.job_id else None
-                        if legacy and legacy.status == 'completed' and legacy.kind == kind and legacy.snapshot.get('scene') and dependency_identity(
+                        if legacy and legacy.status == 'completed' and legacy.kind == kind and legacy.snapshot.get('scene') and (kind != 'clip' or clip_output_matches(legacy, project, scene)) and dependency_identity(
                                 legacy.snapshot['project'], legacy.snapshot['scene'], kind) == dependency_identity(project, scene, kind):
                             output = ({'speech_id': scene['speech_id'], 'duration': scene.get('duration', 0), 'shot_count': scene.get('shot_count', 0)} if kind == 'speech' else
                                       {'keyframe_id': scene['keyframe_id'], 'keyframe_approved': False} if kind == 'keyframe' else
@@ -307,9 +315,12 @@ class ProductionRuns:
                         job = Job(project_id=run.project_id, scene_id=scene['id'] if scene else None,
                             host_id=project.get('host_id') if kind != 'export' else None, kind=kind, input_hash=hashed,
                             snapshot={'project': snap_project, 'scene': deepcopy(scene), 'production_run_id': run.id,
+                                      'generation_version': 2,
                                       'draft_export_authorized': True, 'request': {'kind': kind}, 'workflow_hashes': workflows})
                         session.add(job)
                         session.flush()
+                        if kind == 'clip' and cp.get('pending_clip_config'):
+                            self.jobs.set_pending_clip_config(job, cp['pending_clip_config'])
                     cp['jobs'][key] = job.id
                     cp['current_job_id'] = job.id
                     pending = True

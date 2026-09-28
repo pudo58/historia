@@ -3,7 +3,8 @@ import asyncio
 import json
 import shlex
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 from uuid import UUID, uuid5
 
@@ -45,6 +46,106 @@ class ReconcileRequired(RuntimeError):
 class RemoteBackend:
     def __init__(self, hosts, service):
         self.hosts, self.service = hosts, service
+        self._generation = ContextVar('comfy_generation_session', default=None)
+
+    @asynccontextmanager
+    async def generation_session(self, job):
+        async with AsyncExitStack() as stack:
+            token = self._generation.set({'job_id': job.id, 'host_id': job.host_id,
+                                          'stack': stack, 'uploads': {}, 'shots': 0})
+            try:
+                yield
+            finally:
+                self._generation.reset(token)
+
+    @asynccontextmanager
+    async def generation_connection(self, job):
+        state = self._generation.get()
+        if state is None or state['job_id'] != job.id or state['host_id'] != job.host_id:
+            async with self.generation_session(job), self.generation_connection(job) as connection:
+                yield connection
+            return
+        if 'client' not in state:
+            state['executor'], state['client'] = await state['stack'].enter_async_context(self.connection(job.host_id))
+        yield state['client'], state
+
+    async def process_generation(self, executor, host_id):
+        """Read only a matching Comfy PID/start time; never expose process arguments."""
+        if executor is None or self.hosts is None:  # In-memory test transports.
+            return 'in-memory'
+        options = self.hosts.options_for(host_id)
+        script = r'''
+import json, pathlib, sys
+c = json.load(sys.stdin)
+matches = []
+for entry in pathlib.Path('/proc').iterdir():
+    if not entry.name.isdigit(): continue
+    try:
+        argv = (entry/'cmdline').read_bytes().decode().split('\0')
+        if '--port' in argv:
+            if argv[argv.index('--port')+1] != str(c['port']): continue
+        elif c['port'] != 8188: continue
+        cwd = (entry/'cwd').resolve()
+        expected = (pathlib.Path(c['comfy'])/'main.py').resolve()
+        if not any(a.endswith('main.py') and (cwd/a).resolve() == expected for a in argv): continue
+        start = (entry/'stat').read_text().rsplit(')',1)[1].split()[19]
+        matches.append(entry.name + ':' + start)
+    except (OSError, ValueError, IndexError, UnicodeError): pass
+print(json.dumps(matches[0] if len(matches) == 1 else None))
+'''
+        result = await executor.run_input('python3 -c ' + shlex.quote(script),
+            json.dumps({'comfy': options.comfy_root, 'port': options.remote_port}), timeout=20)
+        if result.rc:
+            return None
+        try:
+            return json.loads(result.stdout)
+        except ValueError:
+            return None
+
+    @staticmethod
+    async def runtime_metadata(client):
+        response = await client.get('/system_stats')
+        response.raise_for_status()
+        stats = response.json()
+        system = stats.get('system', {})
+        argv = system.get('argv', [])
+        return {'comfy_version': system.get('comfyui_version'), 'python_version': system.get('python_version'),
+                'torch_version': system.get('pytorch_version'), 'cuda_version': system.get('cuda_version'),
+                'attention_backend': 'sage' if '--use-sage-attention' in argv else 'default',
+                'memory_policy': 'highvram' if '--highvram' in argv else 'default',
+                'compute_flags': sorted(a for a in argv if a in {
+                    '--use-sage-attention', '--use-pytorch-cross-attention', '--use-flash-attention',
+                    '--use-split-cross-attention', '--use-quad-cross-attention', '--use-ck-attention',
+                    '--disable-xformers', '--highvram', '--lowvram', '--novram', '--gpu-only', '--cpu',
+                    '--disable-smart-memory', '--disable-dynamic-vram', '--disable-async-offload',
+                    '--cache-none', '--cache-classic', '--force-fp32', '--force-fp16'}),
+                'devices': [{k: d.get(k) for k in ('name', 'type', 'index', 'vram_total')}
+                            for d in stats.get('devices', [])]}
+
+    async def library_versions(self, executor, generation):
+        if executor is None or not generation:
+            return {}
+        script = r'''
+import json, pathlib, subprocess, sys
+pid, expected_start = json.load(sys.stdin).split(':')
+entry = pathlib.Path('/proc')/str(int(pid))
+assert (entry/'stat').read_text().rsplit(')',1)[1].split()[19] == expected_start
+argv = (entry/'cmdline').read_bytes().decode().split('\0')
+python = pathlib.Path(argv[0])
+assert python.is_absolute() and python.is_file()
+code = "import importlib.metadata as m,json,torch; print(json.dumps({'torch_version':torch.__version__, 'cuda_version':torch.version.cuda, 'sageattention_version':next((d.version for d in m.distributions() if d.metadata.get('Name','').lower()=='sageattention'),None)}))"
+result = subprocess.run([str(python), '-c', code], capture_output=True, text=True, timeout=30)
+assert result.returncode == 0
+data = json.loads(result.stdout)
+print(json.dumps(data))
+'''
+        result = await executor.run_input('python3 -c ' + shlex.quote(script), json.dumps(generation), timeout=40)
+        if result.rc:
+            return {}
+        try:
+            return json.loads(result.stdout)
+        except ValueError:
+            return {}
 
     @asynccontextmanager
     async def connection(self, host_id: str):
@@ -66,25 +167,68 @@ class RemoteBackend:
 
     async def generate(self, job, name: str, prompt: str, images: list[Path],
                        seed: int, quality: str, log, checkpoint, stage: str, steps=None, shot=0) -> Path:
+        started = time.monotonic()
+        try:
+            return await self._generate(job, name, prompt, images, seed, quality, log, checkpoint, stage, steps, shot)
+        finally:
+            # Accounting only: no request or retry is performed from this finally block.
+            if self.service and hasattr(self.service, 'require'):
+                from studio.models import Job
+                current = self.service.require(Job, job.id).result.get('submissions', {}).get(stage)
+                if current:
+                    total = current.get('timing', {}).get('total_seconds', 0)
+                    checkpoint(stage, {'timing': {'total_seconds': total + time.monotonic() - started}})
+
+    async def _generate(self, job, name: str, prompt: str, images: list[Path],
+                        seed: int, quality: str, log, checkpoint, stage: str, steps=None, shot=0) -> Path:
+        from studio.comfy_schema import normalize_graph
+        from studio.generation import shot_config
+        from studio.media import digest
+        from studio.metrics import execution_seconds
+        from studio.service import canonical_hash
         target_dir = self.service.job_directory(job.id)
-        prompt_id = str(uuid5(UUID(job.id), stage))
-        async with self.connection(job.host_id) as (_, client):
+        prior = job.result.get("submissions", {}).get(stage)
+        prompt_id = (prior or {}).get('prompt_id') or str(uuid5(UUID(job.id), stage))
+        async with self.generation_connection(job) as (client, cache):
             names = []
-            prior = job.result.get("submissions", {}).get(stage)
+            if prior:
+                checkpoint(stage, {'attempts': prior.get('attempts', 1) + 1})
+            timing = dict((prior or {}).get('timing', {}))
+            config = shot_config(job, stage) if name == 'wan_i2v' else None
             history = await client.get(f"/history/{prompt_id}")
             history.raise_for_status()
             item = history.json().get(prompt_id)
             queue = await client.get("/queue")
             queue.raise_for_status()
             queued = any(len(row) > 1 and row[1] == prompt_id for key in ["queue_running", "queue_pending"] for row in queue.json().get(key, []))
+            if not item and not queued and prior and prior.get('state') in {'remote_completed', 'downloaded'} and prior.get('output'):
+                item = {'status': {'status_str': 'success', 'completed': True},
+                        'outputs': {'recovered': {'videos' if name == 'wan_i2v' else 'images': [prior['output']]}}}
             if not item and not queued and prior:
                 raise ReconcileRequired("Không tìm thấy prompt đã gửi trong queue/history. Không tự gửi lại để tránh render trùng; kiểm tra máy GPU rồi tạo lượt mới.")
             if not item and not queued:
                 if queue.json().get("queue_running") or queue.json().get("queue_pending"):
                     raise ValueError("GPU đang chạy công việc bên ngoài Studio. Chờ queue ComfyUI rỗng.")
+                prepared = time.monotonic()
+                runtime = await self.runtime_metadata(client)
+                generation = await self.process_generation(cache.get('executor'), job.host_id)
+                if generation is None or cache.get('process_generation') != generation or cache.get('runtime') != runtime:
+                    cache['uploads'].clear()
+                    cache.pop('schema', None)
+                    cache['shots'] = 0
+                cache['process_generation'] = generation
+                cache['runtime'] = runtime
+                if cache.get('versions_generation') != generation:
+                    cache['library_versions'] = await self.library_versions(cache.get('executor'), generation)
+                    cache['versions_generation'] = generation
+                runtime = {**runtime, **cache.get('library_versions', {})}
                 for index, path in enumerate(images):
                     from studio.formats import resolve_format
                     fmt = resolve_format(quality, job.snapshot.get("project", {}))
+                    upload_key = (digest(path), tuple(fmt['render_size']), fmt['legacy'])
+                    if upload_key in cache['uploads']:
+                        names.append(cache['uploads'][upload_key])
+                        continue
                     if not fmt["legacy"]:
                         from PIL import Image, ImageOps
                         fitted = target_dir / f"reference-fit-{index}.png"
@@ -102,16 +246,21 @@ class RemoteBackend:
                     if PurePosixPath(name_on_host).name != name_on_host or ".." in PurePosixPath(subfolder).parts:
                         raise ValueError("ComfyUI trả tên upload không an toàn.")
                     names.append(f"{subfolder}/{name_on_host}" if subfolder else name_on_host)
-                graph = graph_for(name, prompt, seed, quality, names, f"studio/{job.id}/{stage}", steps, shot,
+                    cache['uploads'][upload_key] = names[-1]
+                graph = graph_for(name, prompt, seed, quality, names, f"studio/{job.id}/{stage}", config['steps'] if config else steps, shot,
                                   project_settings=job.snapshot.get("project", {}))
-                schema_response = await client.get("/object_info")
-                schema_response.raise_for_status()
-                schema = schema_response.json()
-                missing = sorted({n["class_type"] for n in graph.values()} - set(schema))
-                if missing:
-                    raise ValueError("Thiếu node từ workflow pack: " + ", ".join(missing))
+                if 'schema' not in cache:
+                    schema_response = await client.get("/object_info")
+                    schema_response.raise_for_status()
+                    cache['schema'] = schema_response.json()
+                graph = normalize_graph(graph, cache['schema'])
+                timing['prepare_upload_seconds'] = time.monotonic() - prepared
                 # Record before the network write: on an ambiguous response we only reconcile.
-                checkpoint(stage, {"prompt_id": prompt_id, "state": "submitting"})
+                checkpoint(stage, {"prompt_id": prompt_id, "state": "submitting",
+                                   'config': config, 'graph_hash': canonical_hash(graph), 'runtime': runtime,
+                                   'cold_candidate': cache['shots'] == 0, 'timing': timing,
+                                   'attempts': 1})
+                cache['shots'] += 1
                 try:
                     response = await client.post("/prompt", json={"prompt": graph, "prompt_id": prompt_id, "client_id": job.id})
                     response.raise_for_status()
@@ -121,17 +270,25 @@ class RemoteBackend:
                     raise ValueError("ComfyUI không chấp nhận workflow. Kiểm tra node/model của bộ cài.")
                 checkpoint(stage, {"prompt_id": prompt_id, "state": "submitted"})
                 log(f"Đã gửi {stage}; đang chờ GPU xử lý.")
+            waiting = time.monotonic()
             deadline = time.monotonic() + 3600
-            while not item:
-                if time.monotonic() > deadline:
-                    raise ReconcileRequired("Prompt chưa hoàn tất sau 60 phút. Giữ ID để kiểm tra tiếp, không gửi lại.")
-                await asyncio.sleep(2)
-                response = await client.get(f"/history/{prompt_id}")
-                response.raise_for_status()
-                item = response.json().get(prompt_id)
+            try:
+                while not item:
+                    if time.monotonic() > deadline:
+                        raise ReconcileRequired("Prompt chưa hoàn tất sau 60 phút. Giữ ID để kiểm tra tiếp, không gửi lại.")
+                    await asyncio.sleep(2)
+                    response = await client.get(f"/history/{prompt_id}")
+                    response.raise_for_status()
+                    item = response.json().get(prompt_id)
+            finally:
+                timing['remote_wait_seconds'] = timing.get('remote_wait_seconds', 0) + time.monotonic() - waiting
+                checkpoint(stage, {'timing': timing})
             status = item.get("status", {})
             if status.get("status_str") != "success" or not status.get("completed"):
                 raise ValueError("ComfyUI xử lý thất bại. Có thể thiếu VRAM/model; không tự giảm chất lượng.")
+            seconds = execution_seconds(item, prompt_id)
+            if seconds is not None:
+                timing['comfy_execution_seconds'] = seconds
             outputs = []
             for output in item.get("outputs", {}).values():
                 for key in ["images", "gifs", "videos"]:
@@ -144,19 +301,28 @@ class RemoteBackend:
             if PurePosixPath(filename).name != filename or ".." in PurePosixPath(output.get("subfolder", "")).parts:
                 raise ValueError("Tên artifact trả về không an toàn.")
             target = target_dir / (stage + Path(filename).suffix)
+            checkpoint(stage, {'prompt_id': prompt_id, 'state': 'remote_completed',
+                               'output': {k: output[k] for k in ('filename', 'subfolder', 'type') if k in output},
+                               'timing': timing})
             part = target.with_suffix(target.suffix + ".part")
-            async with client.stream("GET", "/view", params={k: output[k] for k in ["filename", "subfolder", "type"] if k in output}) as response:
-                response.raise_for_status()
-                count = 0
-                with part.open("wb") as handle:
-                    async for chunk in response.aiter_bytes():
-                        count += len(chunk)
-                        if count > 2_000_000_000:
-                            raise ValueError("Output vượt giới hạn 2 GB cho một clip.")
-                        handle.write(chunk)
+            download_started = time.monotonic()
+            try:
+                async with client.stream("GET", "/view", params={k: output[k] for k in ["filename", "subfolder", "type"] if k in output}) as response:
+                    response.raise_for_status()
+                    count = 0
+                    with part.open("wb") as handle:
+                        async for chunk in response.aiter_bytes():
+                            count += len(chunk)
+                            if count > 2_000_000_000:
+                                raise ValueError("Output vượt giới hạn 2 GB cho một clip.")
+                            handle.write(chunk)
+            finally:
+                timing['download_seconds'] = timing.get('download_seconds', 0) + time.monotonic() - download_started
+                checkpoint(stage, {'timing': timing})
             if not count:
                 raise ValueError("Output tải về rỗng.")
             part.replace(target)
+            validation_started = time.monotonic()
             if name == "wan_i2v":
                 if probe(target)["duration"] <= 0:
                     raise ValueError("Output không phải video đọc được.")
@@ -164,7 +330,8 @@ class RemoteBackend:
                 from PIL import Image
                 with Image.open(target) as image:
                     image.verify()
-            checkpoint(stage, {"prompt_id": prompt_id, "state": "downloaded"})
+            timing['validation_seconds'] = time.monotonic() - validation_started
+            checkpoint(stage, {"prompt_id": prompt_id, "state": "downloaded", 'timing': timing})
             return target
 
     async def cancel(self, job) -> None:

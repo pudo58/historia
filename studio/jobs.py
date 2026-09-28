@@ -2,9 +2,8 @@
 import asyncio
 import json
 import time
-from contextlib import nullcontext
+from contextlib import AsyncExitStack, nullcontext
 from datetime import UTC, datetime
-
 
 import asyncssh
 import httpx
@@ -35,6 +34,8 @@ class StudioJobs:
         self.installations = Installations(self)
         from studio.production import ProductionRuns
         self.runs = ProductionRuns(self)
+        from studio.runtime import RuntimeManager
+        self.runtime = RuntimeManager(self)
 
     def list(self, project_id=None):
         with self.service.sessions() as session:
@@ -53,6 +54,7 @@ class StudioJobs:
         if confirmed is not True or remote_state_unknown is not True:
             raise ValueError('Cần xác nhận bỏ lượt và chấp nhận trạng thái remote/chi phí chưa rõ.')
         from sqlalchemy import text
+
         from studio.models import ProductionRun
         with self.service.sessions() as session:
             session.execute(text('BEGIN IMMEDIATE'))
@@ -86,10 +88,12 @@ class StudioJobs:
         with self.service.sessions() as session:
             if session.scalar(select(Job.id).where(Job.host_id == host_id, Job.status.in_(ACTIVE))):
                 raise ValueError("GPU có tác vụ Studio đang chạy/chờ đối chiếu. Dừng và xác nhận trước khi đổi cấu hình.")
+            if any(job.result.get('maintenance_pending') for job in session.scalars(select(Job).where(Job.host_id == host_id))):
+                raise ValueError('Bảo trì runtime chưa rõ trạng thái; khôi phục runtime trước khi đổi host hoặc chạy recipe.')
 
     @staticmethod
     def remote_pending(result):
-        return bool(result.get('submissions') or result.get('speech_pending') or
+        return bool(result.get('maintenance_pending') or result.get('submissions') or result.get('speech_pending') or
                     result.get('outline_pending') or result.get('chapter_pending') is not None)
 
     def recover(self):
@@ -116,9 +120,10 @@ class StudioJobs:
             self.worker.cancel()
             await asyncio.gather(self.worker, return_exceptions=True)
 
-    def event(self, job_id, message):
+    def event(self, job_id, message, *, level='info', stage=None):
         with self.service.sessions() as session:
-            session.add(JobEvent(job_id=job_id, message=str(message)[:4000]))
+            session.add(JobEvent(job_id=job_id, message=str(message)[:4000],
+                                 context={'level': level, 'stage': stage, 'source': 'studio'}))
             session.commit()
 
     def patch(self, job_id, **values):
@@ -128,13 +133,84 @@ class StudioJobs:
             job = session.get(Job, job_id)
             if job.status == 'abandoned':
                 return
+            if values.get('error') and values['error'] != job.error:
+                session.add(JobEvent(job_id=job_id, message=str(values['error'])[:4000],
+                                     context={'level': 'error', 'source': 'studio'}))
             for key, value in values.items():
                 setattr(job, key, value)
             session.commit()
 
     def checkpoint(self, job_id, stage, value):
-        row = self.service.require(Job, job_id)
-        self.patch(job_id, result={**row.result, "submissions": {**row.result.get("submissions", {}), stage: value}})
+        from sqlalchemy import text
+        with self.service.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            row = session.get(Job, job_id)
+            if row.status == 'abandoned':
+                return
+            submissions = dict(row.result.get('submissions', {}))
+            old = submissions.get(stage, {})
+            submissions[stage] = {**old, **value}
+            if 'timing' in value:
+                submissions[stage]['timing'] = {**old.get('timing', {}), **value['timing']}
+            state_labels = {'submitted': 'Đã gửi tới GPU', 'remote_completed': 'GPU đã tạo output',
+                            'downloaded': 'Đã tải và kiểm tra output'}
+            if value.get('state') in state_labels and old.get('state') != value['state']:
+                session.add(JobEvent(job_id=job_id, message=state_labels[value['state']],
+                    context={'level': 'info', 'stage': stage, 'source': 'studio'}))
+            if value.get('artifact_id') and value['artifact_id'] != old.get('artifact_id'):
+                session.add(JobEvent(job_id=job_id, message='Đã lưu artifact local',
+                    context={'level': 'info', 'stage': stage, 'source': 'studio'}))
+            row.result = {**row.result, 'submissions': submissions}
+            session.commit()
+
+    def set_pending_clip_config(self, job, config):
+        """Called under a writer transaction. Never change an existing prompt intent."""
+        from studio.schemas import PendingClipConfig
+        config = PendingClipConfig.model_validate(config).model_dump()
+        duration = probe(self.service.artifact_path(job.snapshot['scene']['speech_id']))['duration']
+        protected = job.result.get('submissions', {})
+        with self.service.sessions() as session:
+            completed = {a.name.removesuffix('.mp4') for a in session.scalars(
+                select(Artifact).where(Artifact.job_id == job.id))}
+        changes = dict(job.result.get('pending_clip_configs', {}))
+        for index in range(shot_count(duration)):
+            stage = f'clip-{index}'
+            if stage not in protected and stage not in completed:
+                changes[stage] = config
+        job.result = {**job.result, 'pending_clip_configs': changes,
+                      'clip_config_version': job.result.get('clip_config_version', 0) + 1}
+
+    def configure_pending(self, config, *, job_id=None, run_id=None):
+        from sqlalchemy import text
+
+        from studio.models import ProductionRun
+        with self.service.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            if run_id:
+                run = session.get(ProductionRun, run_id)
+                if not run:
+                    raise KeyError(run_id)
+                if run.status != 'paused':
+                    raise ValueError('Tạm dừng lượt sản xuất tại ranh giới shot trước khi đổi cấu hình.')
+                job_id = run.checkpoint.get('current_job_id')
+            job = session.get(Job, job_id) if job_id else None
+            if job and self.current and self.current[0] == job.id:
+                raise ValueError('Worker đang kết thúc shot; đợi checkpoint an toàn.')
+            if job and (not run_id or job.status != 'completed'):
+                if job.kind != 'clip' or job.status != 'paused':
+                    raise ValueError('Chỉ đổi clip đã tạm dừng tại ranh giới shot.')
+                if job.snapshot.get('production_run_id') and not run_id:
+                    raise ValueError('Đổi cấu hình qua lượt sản xuất đang giữ job này.')
+                if any(v.get('state') != 'downloaded' for v in job.result.get('submissions', {}).values()):
+                    raise ValueError('Đối chiếu tất cả prompt đã gửi trước khi đổi cấu hình.')
+                self.set_pending_clip_config(job, config)
+            elif not run_id:
+                raise KeyError(job_id)
+            if run_id:
+                run.checkpoint = {**run.checkpoint, 'pending_clip_config': config,
+                                  'clip_config_version': run.checkpoint.get('clip_config_version', 0) + 1}
+            session.commit()
+        return self.runs.get(run_id) if run_id else self.service.read(self.service.require(Job, job_id))
 
     def artifact_valid(self, artifact_id):
         if not artifact_id:
@@ -200,9 +276,8 @@ class StudioJobs:
                     raise ValueError('Tạo giọng và duyệt ảnh tất cả cảnh trước khi tạo clip.')
                 if not scene['clips_valid']:
                     requests.append(JobInput(kind='clip', scene_id=scene['scene_id']))
-            elif stage == 'export':
-                if not scene['clips_valid'] or not scene['clip_approved'] or not scene['speech_valid']:
-                    raise ValueError('Duyệt đủ clip và giọng đọc trước khi xuất.')
+            elif stage == 'export' and (not scene['clips_valid'] or not scene['clip_approved'] or not scene['speech_valid']):
+                raise ValueError('Duyệt đủ clip và giọng đọc trước khi xuất.')
         if stage == 'export':
             requests = [JobInput(kind='export')]
         queued = [self.submit(project_id, request, transaction=session) for request in requests]
@@ -219,9 +294,11 @@ class StudioJobs:
 
     @staticmethod
     def input_identity(project, scene, kind):
+        from studio.generation import identity_scene
         settings = {k: v for k, v in project.items() if k not in {'scenes', 'created_at', 'updated_at', 'tts_device'}}
         if scene:
-            fields = set(SceneInput.model_fields) | {'script_approved'}
+            scene = identity_scene(scene, kind)
+            fields = (set(SceneInput.model_fields) - {'keyframe_steps', 'clip_steps'}) | {'script_approved'}
             if kind == 'clip':
                 fields |= {'keyframe_id', 'keyframe_approved', 'speech_id'}
             return {'project': settings, 'scene': {k: scene.get(k) for k in sorted(fields)}}
@@ -280,7 +357,7 @@ class StudioJobs:
         if request.kind == "speech":
             from studio.tts_device import new_tts_device
             project_snapshot["tts_device"] = new_tts_device(project)
-        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(),
+        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(), 'generation_version': 2,
                     "workflow_hashes": {n: canonical_hash(load_graph(n)) for n in ("qwen_image", "qwen_edit", "wan_i2v")}}
         hashed = canonical_hash({'kind': request.kind, 'host': host_id,
             'inputs': self.input_identity(project, scene, request.kind), 'workflow_hashes': snapshot['workflow_hashes']})
@@ -303,6 +380,22 @@ class StudioJobs:
                 raise ValueError('Tác vụ cùng đầu vào vẫn đang chạy/chờ đối chiếu; không tạo lượt trùng.')
             if not request.force:
                 existing = session.scalar(select(Job).where(Job.input_hash == hashed).order_by(Job.created_at.desc()))
+                from studio.generation import clip_output_matches
+                if existing and request.kind == 'clip' and existing.status == 'completed' and not clip_output_matches(existing, project, scene):
+                    raise ValueError('Clip cũ dùng cấu hình phần còn thiếu khác yêu cầu hiện tại. Giữ kết quả; chọn lượt mới riêng nếu muốn tạo lại.')
+                if existing is None and request.kind in {'speech', 'keyframe', 'clip'}:
+                    from studio.generation import compatible_workflow_hashes
+                    for candidate in session.scalars(select(Job).where(Job.project_id == project_id,
+                            Job.scene_id == request.scene_id, Job.kind == request.kind,
+                            Job.host_id == host_id).order_by(Job.created_at.desc())):
+                        old = candidate.snapshot
+                        if (old.get('scene') and not candidate.result.get('stale') and
+                                self.input_identity(old['project'], old['scene'], request.kind) == self.input_identity(project, scene, request.kind) and
+                                compatible_workflow_hashes(old.get('workflow_hashes', {}), snapshot['workflow_hashes'])):
+                            if request.kind == 'clip' and candidate.status == 'completed' and not clip_output_matches(candidate, project, scene):
+                                raise ValueError('Clip cũ có cấu hình từng shot khác yêu cầu. Không tự render lại.')
+                            existing = candidate
+                            break
                 if existing:
                     if existing.status in {'failed', 'interrupted', 'cancelled'}:
                         raise ValueError('Tác vụ trước cần xử lý riêng: tiếp tục job bị gián đoạn hoặc xác nhận lượt mới; không tự thử lại theo lô.')
@@ -382,7 +475,8 @@ class StudioJobs:
                 blocked = {j.host_id for j in session.scalars(select(Job).where(
                     Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned'])))
                     if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result)}
-            job = next((j for j in jobs if j.host_id not in blocked), None)
+            job = next((j for j in jobs if j.host_id not in blocked or
+                        (j.kind == 'runtime' and self.runtime.at_boundary(j.host_id, j.id, recover=j.snapshot.get('action') == 'recover'))), None)
             if job is None:
                 await asyncio.sleep(.5)
                 continue
@@ -542,7 +636,10 @@ class StudioJobs:
         self.patch(job.id, result={**before, 'timing': {**timing,
             'started_at': timing.get('started_at', datetime.now(UTC).isoformat())}})
         try:
-            return await self._execute(job)
+            async with AsyncExitStack() as stack:
+                if job.kind in {'clip', 'keyframe'} and hasattr(self.backend, 'generation_session'):
+                    await stack.enter_async_context(self.backend.generation_session(job))
+                return await self._execute(job)
         finally:
             state = self.service.require(Job, job.id).result
             self.patch(job.id, result={**state, 'timing': {**state.get('timing', {}),
@@ -555,6 +652,11 @@ class StudioJobs:
             return
         if job.host_id:
             self.assert_no_abandoned_remote(job.host_id)
+        if job.kind == 'runtime':
+            return await self.runtime.execute(job)
+        if job.kind == 'benchmark':
+            from studio.benchmark import execute
+            return await execute(self, job)
         if job.kind == 'video_test':
             return await self.installations.execute_video_test(job)
         if job.kind in {'install', 'verify'}:
@@ -672,10 +774,19 @@ class StudioJobs:
                     prompt + f'\nShot {index+1}/{count}: {framing[index % len(framing)]}. '
                     f'Unique moment {index+1} in the scene progression. No repeated or slowed footage.')
                 started = time.monotonic()
-                path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images, scene["seed"], project["quality"], log, checkpoint, stage, scene.get("steps"), index)
+                from studio.generation import stage_steps
+                path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images, scene["seed"], project["quality"], log, checkpoint, stage, stage_steps(scene, job.kind, graph), index)
+                stored = time.monotonic()
+                measurement = self.service.require(Job, job.id).result.get('submissions', {}).get(stage, {})
                 artifact = self.service.artifact(path, job.project_id, stage + (".mp4" if job.kind == "clip" else ".png"), job.id,
                     {'prompt': shot_prompt, 'shot_index': index, 'elapsed_seconds': time.monotonic()-started,
+                     'generation': measurement,
                      'input_revision': scene['revision']})
+                if measurement:
+                    storage_seconds = time.monotonic() - stored
+                    checkpoint(stage, {'artifact_id': artifact['id'], 'timing': {
+                        'storage_seconds': storage_seconds,
+                        'total_seconds': measurement.get('timing', {}).get('total_seconds', 0) + storage_seconds}})
                 ids.append(artifact["id"])
                 self.patch(job.id, progress=round((index+1)*95/count))
             self.scene_result(job.scene_id, job=job, **({"keyframe_id": ids[0], "keyframe_approved": False, "clip_ids": [], "clip_approved": False} if job.kind == "keyframe" else {"clip_ids": ids, "clip_approved": False}))

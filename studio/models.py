@@ -85,6 +85,7 @@ class JobEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("studio_jobs.id", ondelete="CASCADE"), index=True)
     message: Mapped[str] = mapped_column(Text)
+    context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), default=timestamp)
 
 

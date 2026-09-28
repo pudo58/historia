@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "sageattention": "2.2.0",
+  "python_minors": [11, 12],
+  "default_attention_backend": "default",
+  "default_memory_policy": "default"
+}

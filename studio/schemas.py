@@ -89,6 +89,8 @@ class SceneInput(StrictModel):
     citations: list[Citation] = Field(default_factory=list, max_length=20)
     seed: int = Field(default=42, ge=0, le=2**53-1)
     steps: int | None = Field(default=None, ge=1, le=50)
+    keyframe_steps: int | None = Field(default=None, ge=1, le=50)
+    clip_steps: int | None = Field(default=None, ge=2, le=50)
     review_note: str = Field(default="", max_length=2000)
 
 
@@ -114,7 +116,7 @@ class OutlineApproval(StrictModel):
 
 class JobInput(StrictModel):
     kind: Literal["outline", "script", "analyze_reference", "keyframe", "speech", "clip",
-                  "export", "install", "verify", "benchmark"]
+                  "export", "install", "verify"]
     host_id: str | None = None
     scene_id: str | None = None
     source_id: str | None = None
@@ -142,3 +144,18 @@ class BatchInput(StrictModel):
 class ExportInput(StrictModel):
     burn_subtitles: bool = False
     music_artifact_id: str | None = None
+
+
+class PendingClipConfig(StrictModel):
+    clip_steps: int = Field(default=4, ge=2, le=50)
+
+
+class RuntimeConfig(StrictModel):
+    attention_backend: Literal['default', 'sage'] = 'default'
+    memory_policy: Literal['default', 'highvram'] = 'default'
+
+
+class BenchmarkInput(StrictModel):
+    scene_id: str
+    warm_shots: int = Field(default=5, ge=5, le=20)
+    max_wall_seconds: int = Field(ge=300, le=14400)

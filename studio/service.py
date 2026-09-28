@@ -10,7 +10,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from studio.media import digest
 from studio.models import Artifact, Character, Job, ProductionRun, Project, Scene, Source
-from studio.schemas import CharacterInput, ProjectInput, SceneInput, SceneUpdate, TextSourceInput, target_duration
+from studio.schemas import (
+    CharacterInput,
+    ProjectInput,
+    SceneInput,
+    SceneUpdate,
+    TextSourceInput,
+    target_duration,
+)
 
 
 def canonical_hash(value: Any) -> str:
@@ -53,6 +60,7 @@ class StudioService:
     def delete_project(self, id: str) -> None:
         """Delete local records only; retain files and never contact a GPU."""
         from sqlalchemy import text
+
         from studio.jobs import ACTIVE, StudioJobs
         with self.sessions() as session:
             session.execute(text('BEGIN IMMEDIATE'))
@@ -88,6 +96,8 @@ class StudioService:
             if script_changed:
                 values["outline_approved"] = False
             visual_changed = any(old.get(k) != values[k] for k in ["style", "era", "location", "quality", "render_profile", "aspect_ratio"])
+            from studio.formats import resolve_format
+            visual_changed = visual_changed or resolve_format(old.get('quality', 'draft'), old)['render_size'] != resolve_format(values.get('quality', 'draft'), values)['render_size']
             audio_changed = any(old.get(k) != values[k] for k in ["voice", "pronunciation"])
             for scene in session.scalars(select(Scene).where(Scene.project_id == id)):
                 scene_data = dict(scene.data)
@@ -234,10 +244,15 @@ class StudioService:
         if data.revision != old.revision:
             raise ValueError("Cảnh đã được cập nhật ở nơi khác. Tải lại trước khi lưu.")
         values = {**old.data, **data.model_dump(exclude={"revision"}), "warnings": warnings}
+        from studio.generation import identity_scene
         visual_fields = ["visual_prompt", "camera", "character_ids", "reference_ids", "seed", "steps"]
-        if any(old.data.get(k) != values[k] for k in visual_fields):
+        before, after = identity_scene(old.data, 'keyframe'), identity_scene(values, 'keyframe')
+        if any(before.get(k) != after.get(k) for k in visual_fields):
             for k in ["keyframe_id", "keyframe_approved", "clip_ids", "clip_approved"]:
                 values.pop(k, None)
+        elif identity_scene(old.data, 'clip').get('steps') != identity_scene(values, 'clip').get('steps'):
+            values.pop('clip_ids', None)
+            values.pop('clip_approved', None)
         if old.data.get("narration") != values["narration"]:
             values.pop("speech_id", None)
             values.pop("duration", None)

@@ -43,6 +43,8 @@ node_modules/
 **/node_modules/
 **/dist/
 *.tsbuildinfo
+**/test-results/
+**/playwright-report/
 
 # Runtime / local data (Historia)
 studio-data/

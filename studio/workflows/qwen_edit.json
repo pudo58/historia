@@ -128,7 +128,8 @@
         0
       ],
       "upscale_method": "lanczos",
-      "megapixels": 0.9216
+      "megapixels": 0.88,
+      "resolution_steps": 16
     }
   },
   "110": {
