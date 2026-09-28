@@ -52,6 +52,9 @@ class ProjectInput(StrictModel):
     host_id: str | None = None
     hourly_usd: float | None = Field(default=None, ge=0, le=1000)
     pronunciation: str = Field(default="", max_length=4000)
+    keyframe_profile: Literal["standard", "lightning"] = "standard"
+    frame_interpolation: Literal["none", "rife24"] = "none"
+    audio_mix_profile: Literal["legacy", "voice_duck_v1"] = "legacy"
 
 
 class TextSourceInput(StrictModel):
@@ -84,6 +87,15 @@ class SceneInput(StrictModel):
     narration: str = Field(default="", max_length=4000)
     visual_prompt: str = Field(default="", max_length=4000)
     camera: str = Field(default="Chuyển động chậm, tự nhiên", max_length=1000)
+    motion: Literal["wan", "kenburns", "static"] = "wan"
+    image_strategy: Literal["shared", "per_shot", "chain_last"] = "shared"
+    shorten_last_shot: bool = False
+
+    @model_validator(mode='after')
+    def validate_motion(self):
+        if self.motion != 'wan' and self.image_strategy != 'shared':
+            raise ValueError('Ảnh riêng/nối frame cuối chỉ dùng với Wan.')
+        return self
     character_ids: list[str] = Field(default_factory=list, max_length=10)
     reference_ids: list[str] = Field(default_factory=list, max_length=3)
     citations: list[Citation] = Field(default_factory=list, max_length=20)
@@ -104,6 +116,40 @@ class Approval(StrictModel):
     approved: bool = True
 
 
+class KeyframeBatchApproval(StrictModel):
+    scene_id: str
+
+
+class ChainFrameApproval(StrictModel):
+    index: int = Field(ge=1)
+    artifact_id: str
+
+
+class ScriptProviderInput(StrictModel):
+    url: str = Field(default='', max_length=2048)
+    model: str = Field(default='', max_length=200)
+    api_key: str = Field(default='', max_length=4096)
+
+    @model_validator(mode='after')
+    def validate_provider(self):
+        if any((self.url, self.model, self.api_key)):
+            import ipaddress
+            from urllib.parse import urlsplit
+            parsed = urlsplit(self.url)
+            if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+                raise ValueError('API kịch bản cần URL HTTPS hợp lệ, không có userinfo/fragment.')
+            try:
+                address = ipaddress.ip_address(parsed.hostname)
+                if not address.is_global:
+                    raise ValueError('Không dùng địa chỉ API nội bộ hoặc loopback.')
+            except ValueError as exc:
+                if 'Không dùng' in str(exc):
+                    raise
+            if not self.model or not self.api_key:
+                raise ValueError('Cần model và khóa API khi bật API kịch bản.')
+        return self
+
+
 class OutlineChapter(StrictModel):
     title: str = Field(min_length=1, max_length=200)
     summary: str = Field(default="", max_length=4000)
@@ -115,13 +161,15 @@ class OutlineApproval(StrictModel):
 
 
 class JobInput(StrictModel):
-    kind: Literal["outline", "script", "analyze_reference", "keyframe", "speech", "clip",
+    kind: Literal["outline", "script", "analyze_reference", "keyframe", "speech", "clip", "rife", "image_review",
                   "export", "install", "verify"]
     host_id: str | None = None
     scene_id: str | None = None
     source_id: str | None = None
     force: bool = False
     license_accepted: bool = False
+    review_mode: Literal['flag', 'compare'] | None = None
+    candidate_ids: list[str] = Field(default_factory=list, max_length=2)
 
 
 class ProductionRunInput(StrictModel):
@@ -148,6 +196,7 @@ class ExportInput(StrictModel):
 
 class PendingClipConfig(StrictModel):
     clip_steps: int = Field(default=4, ge=2, le=50)
+    shorten_last_shot: bool | None = None
 
 
 class RuntimeConfig(StrictModel):

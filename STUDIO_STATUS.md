@@ -37,6 +37,16 @@ Dependency local khai báo trong `pyproject.toml`; không cần cài model AI l�
 
 ## Kiểm thử
 
+### Chất lượng và chi phí render (28/09/2026)
+
+- Cảnh mới chọn Wan (mặc định 81 frame, 16 fps, Lightning 4 bước, một ảnh chung), Ken Burns hoặc ảnh tĩnh. Hai chế độ local tạo clip 24 fps phủ đúng audio; Wan có thể dùng ảnh riêng từng shot (duyệt cả bộ) hoặc frame cuối shot trước (duyệt từng frame trước khi gửi shot tiếp).
+- Cảnh v3 có thể rút riêng shot Wan cuối còn `4n+1` frame trong khoảng 33–81; tùy chọn này và `clip_steps` cũng áp dụng được cho shot chưa gửi khi pause. Intent đã có `prompt_id`, shot hoàn thành, seed, chỉ số shot và audio không đổi. Snapshot cũ vẫn dùng hành vi cũ.
+- Qwen-Image text có hồ sơ Lightning 4 bước tùy chọn với LoRA fp8 riêng và checksum/revision; hồ sơ 20 bước vẫn mặc định. RIFE 4.26 là job hậu kỳ riêng: Comfy 16→48 fps, local lấy mẫu 24 fps và lưu artifact riêng. Có thể xuất lại từ clip Wan cũ. Cả hai model là cài đặt tùy chọn, phải xác minh checksum trên host trước khi dùng.
+- Kịch bản AI mới dùng prompt hình tiếng Anh, lời đọc/trích dẫn tiếng Việt. Có thể cấu hình API OpenAI-compatible HTTPS; khóa nằm trong LocalSetting mã hóa. Không có cấu hình API thì dùng Qwen3-VL local; lỗi API không tự chuyển model, trạng thái gửi chưa rõ chuyển sang đối chiếu. Kiểm ảnh Qwen3-VL chỉ gắn cờ/so sánh, không tự duyệt.
+- Export có thể ghép **một** tệp âm thanh được đánh dấu “Sử dụng” trong thư viện. Hồ sơ `voice_duck_v1` tùy chọn dùng sidechaincompress, amix normalize=0, loudnorm mục tiêu −16 LUFS/−1,5 dBTP và lưu số đo LUFS/peak. Chưa bật hồ sơ này làm mặc định cho final vì cần nghe thử. Cảnh thường được nén H.264 một lần; khi cần hòa hình dùng trung gian FFV1.
+- Video gợi ý mở RunPod sau 10 phút nhàn rỗi chỉ khi đọc được queue Comfy và không có prompt/job cần đối chiếu; không gọi API dừng Pod. Nếu không kiểm tra được queue, hiển thị chưa xác minh.
+- Kiểm thử local gồm graph/API checkpoint, mode ảnh tĩnh, RIFE timing và mix media tổng hợp. **Chưa thuê A100 cho A/B**, chưa có median hot shot, GPU-hours/chi phí thực hay đánh giá lỗi chuyển động. Cần chốt giới hạn tiền thuê trước khi benchmark ít nhất 5 shot nóng mỗi cấu hình.
+
 ### Video / Nhật ký / Tác vụ mới (28/09/2026)
 
 - Video và Nhật ký là hai tab riêng, nền tối kiểu phòng dựng. Video có một player, danh sách cảnh/shot, bộ chọn lượt và inspector; Tác vụ dùng bảng gọn có tên dự án/cảnh.

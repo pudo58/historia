@@ -1,4 +1,6 @@
 """Resolved generation settings; legacy snapshots retain their original meaning."""
+import math
+
 from studio.formats import resolve_format
 
 LEGACY_WORKFLOW_HASHES = {
@@ -13,30 +15,47 @@ def compatible_workflow_hashes(old, current):
         value in (current[name], LEGACY_WORKFLOW_HASHES.get(name)) for name, value in old.items())
 
 
-def stage_steps(scene, kind, workflow=None):
+def stage_steps(scene, kind, workflow=None, project=None, generation_version=2):
+    lightning = (generation_version >= 3 and workflow == 'qwen_image' and
+                 (project or {}).get('keyframe_profile') == 'lightning')
+    if lightning:
+        explicit = scene.get('keyframe_steps')
+        if explicit not in (None, 4):
+            raise ValueError('Qwen-Image Lightning cần đúng 4 bước; sửa steps ảnh của cảnh.')
+        return 4
     key = 'clip_steps' if kind == 'clip' else 'keyframe_steps'
     value = scene.get(key)
     if value is None:
         value = scene.get('steps')
     if value is None:
-        value = 4 if kind == 'clip' or workflow == 'qwen_edit' else 20
+        value = 4 if kind == 'clip' or workflow == 'qwen_edit' or lightning else 20
     return max(2, value) if kind == 'clip' else value
 
 
-def clip_config(project, scene, override=None):
+def clip_config(project, scene, override=None, *, index=None, duration=None):
     width, height = resolve_format(project.get('quality', 'draft'), project)['render_size']
-    return {'version': 2, 'width': width, 'height': height, 'frames': 81, 'fps': 16,
+    settings = override or {}
+    frames = 81
+    if settings.get('shorten_last_shot', scene.get('shorten_last_shot', False)) and index is not None and duration:
+        count = math.ceil(duration / (81 / 16))
+        if index == count - 1:
+            remaining = max(0, duration - index * (81 / 16))
+            frames = min(81, max(33, 4 * math.ceil((math.ceil(remaining * 16 - 1e-9) - 1) / 4) + 1))
+    return {'version': 2, 'width': width, 'height': height, 'frames': frames, 'fps': 16,
             'steps': (override or {}).get('clip_steps', stage_steps(scene, 'clip')),
-            'shot_seconds': 81 / 16}
+            'shot_seconds': frames / 16}
 
 
-def shot_config(job, stage):
+def shot_config(job, stage, duration=None):
     prior = job.result.get('submissions', {}).get(stage, {})
     if prior.get('config'):
         return prior['config']
     # A persisted intent always wins over overrides, including legacy intents.
     override = None if prior else job.result.get('pending_clip_configs', {}).get(stage)
-    return clip_config(job.snapshot['project'], job.snapshot.get('scene') or {}, override)
+    index = int(stage.rsplit('-', 1)[1]) if stage.startswith('clip-') else None
+    return clip_config(job.snapshot['project'], job.snapshot.get('scene') or {}, override,
+                       index=index if job.snapshot.get('generation_version', 2) >= 3 else None,
+                       duration=duration)
 
 
 def identity_scene(scene, kind):
@@ -47,6 +66,10 @@ def identity_scene(scene, kind):
         value['steps'] = scene[key]
     value.pop('keyframe_steps', None)
     value.pop('clip_steps', None)
+    for field, default in [('motion', 'wan'), ('image_strategy', 'shared'),
+                           ('shorten_last_shot', False)]:
+        if kind != 'clip' or value.get(field, default) == default:
+            value.pop(field, None)
     return value
 
 
@@ -66,7 +89,13 @@ def clip_output_matches(job, project, scene):
         if not stage.startswith('clip-'):
             continue
         prior = submissions.get(stage, {})
-        actual = prior.get('config') or (original if prior else {**original, 'steps': overrides[stage]['clip_steps']})
-        if actual != expected:
+        index = int(stage.rsplit('-', 1)[1])
+        actual = prior.get('config') or (original if prior else clip_config(
+            job.snapshot['project'], job.snapshot.get('scene') or {}, overrides[stage],
+            index=index if job.snapshot.get('generation_version', 2) >= 3 else None,
+            duration=(job.snapshot.get('scene') or {}).get('duration')))
+        wanted = clip_config(project, scene, index=index,
+            duration=scene.get('duration')) if job.snapshot.get('generation_version', 2) >= 3 else expected
+        if actual != wanted:
             return False
     return True

@@ -68,7 +68,7 @@ class StudioService:
             if row is None:
                 raise KeyError(id)
             if session.scalar(select(ProductionRun.id).where(ProductionRun.project_id == id,
-                    ProductionRun.status.in_(['running', 'pause_requested', 'paused', 'duration_review', 'reconciling']))):
+                    ProductionRun.status.in_(['running', 'pause_requested', 'paused', 'duration_review', 'keyframe_review', 'reconciling']))):
                 raise ValueError('Dự án còn lượt sản xuất đang hoạt động; chưa thể xóa.')
             jobs = list(session.scalars(select(Job).where(Job.project_id == id)))
             if any(job.status in ACTIVE or (job.status not in {'completed', 'cancelled'} and StudioJobs.remote_pending(job.result)) for job in jobs):
@@ -95,7 +95,8 @@ class StudioService:
             script_changed = any(old.get(k) != values[k] for k in ["topic", "era", "location", "duration_minutes", "duration_seconds"])
             if script_changed:
                 values["outline_approved"] = False
-            visual_changed = any(old.get(k) != values[k] for k in ["style", "era", "location", "quality", "render_profile", "aspect_ratio"])
+            visual_changed = any(old.get(k, 'standard' if k == 'keyframe_profile' else None) != values[k]
+                                 for k in ["style", "era", "location", "quality", "render_profile", "aspect_ratio", "keyframe_profile"])
             from studio.formats import resolve_format
             visual_changed = visual_changed or resolve_format(old.get('quality', 'draft'), old)['render_size'] != resolve_format(values.get('quality', 'draft'), values)['render_size']
             audio_changed = any(old.get(k) != values[k] for k in ["voice", "pronunciation"])
@@ -104,7 +105,8 @@ class StudioService:
                 if script_changed:
                     scene_data["script_approved"] = False
                 if visual_changed:
-                    for key in ["keyframe_id", "keyframe_approved", "clip_ids", "clip_approved"]:
+                    for key in ["keyframe_id", "keyframe_approved", "shot_keyframes",
+                                "shot_keyframes_approved", "clip_ids", "clip_approved", "rife_clip_ids"]:
                         scene_data.pop(key, None)
                 if audio_changed:
                     scene_data.pop("speech_id", None)
@@ -112,6 +114,7 @@ class StudioService:
                     scene_data.pop("shot_count", None)
                     scene_data["clip_ids"] = []
                     scene_data["clip_approved"] = False
+                    scene_data.pop('rife_clip_ids', None)
                 if script_changed or visual_changed or audio_changed:
                     scene.data = scene_data
                     scene.revision += 1
@@ -122,7 +125,7 @@ class StudioService:
     def assert_idle(self, project_id: str) -> None:
         with self.sessions() as session:
             if session.scalar(select(ProductionRun.id).where(ProductionRun.project_id == project_id,
-                    ProductionRun.status.in_(['running', 'pause_requested', 'reconciling']))):
+                    ProductionRun.status.in_(['running', 'pause_requested', 'reconciling', 'keyframe_review']))):
                 raise ValueError('Tạm dừng lượt sản xuất trước khi sửa revision.')
             for job in session.scalars(select(Job).where(Job.project_id == project_id,
                     Job.status.in_(['queued', 'running', 'cancelling', 'reconciling', 'paused']))):
@@ -248,17 +251,25 @@ class StudioService:
         visual_fields = ["visual_prompt", "camera", "character_ids", "reference_ids", "seed", "steps"]
         before, after = identity_scene(old.data, 'keyframe'), identity_scene(values, 'keyframe')
         if any(before.get(k) != after.get(k) for k in visual_fields):
-            for k in ["keyframe_id", "keyframe_approved", "clip_ids", "clip_approved"]:
+            for k in ["keyframe_id", "keyframe_approved", "shot_keyframes",
+                      "shot_keyframes_approved", "clip_ids", "clip_approved", "rife_clip_ids"]:
                 values.pop(k, None)
-        elif identity_scene(old.data, 'clip').get('steps') != identity_scene(values, 'clip').get('steps'):
+        elif (identity_scene(old.data, 'clip').get('steps') != identity_scene(values, 'clip').get('steps') or
+              any(old.data.get(k, default) != values.get(k, default) for k, default in
+                  [('motion', 'wan'), ('image_strategy', 'shared'), ('shorten_last_shot', False)])):
             values.pop('clip_ids', None)
             values.pop('clip_approved', None)
+            values.pop('rife_clip_ids', None)
+            if old.data.get('image_strategy', 'shared') != values.get('image_strategy', 'shared'):
+                values.pop('shot_keyframes', None)
+                values.pop('shot_keyframes_approved', None)
         if old.data.get("narration") != values["narration"]:
             values.pop("speech_id", None)
             values.pop("duration", None)
             values.pop("shot_count", None)
             values["clip_ids"] = []
             values["clip_approved"] = False
+            values.pop('rife_clip_ids', None)
         values["script_approved"] = False
         with self.sessions() as session:
             old.data = values
@@ -283,6 +294,14 @@ class StudioService:
             raise ValueError("Chưa có clip để duyệt.")
         if approved and target == "keyframe":
             self.artifact_path(row.data["keyframe_id"])
+            if row.data.get('image_strategy') == 'per_shot':
+                from studio.media import probe, scene_clip_count
+                expected = scene_clip_count(row.data, probe(self.artifact_path(row.data['speech_id']))['duration'])
+                selected = row.data.get('shot_keyframes') or []
+                if len(selected) != expected:
+                    raise ValueError('Cần đủ ảnh riêng cho từng shot trước khi duyệt.')
+                for artifact_id in selected:
+                    self.artifact_path(artifact_id)
         if approved and target == "clip":
             from studio.media import probe
             if not row.data.get("keyframe_approved") or not row.data.get("speech_id") or not row.data.get("script_approved"):
@@ -294,6 +313,8 @@ class StudioService:
         if target == "script" and approved and not row.data.get("citations") and not row.data.get("review_note"):
             raise ValueError("Cảnh thiếu nguồn: thêm trích dẫn hoặc ghi chú kiểm chứng của bạn trước khi duyệt.")
         row.data = {**row.data, target + "_approved": approved}
+        if target == 'keyframe' and row.data.get('image_strategy') == 'per_shot':
+            row.data = {**row.data, 'shot_keyframes_approved': approved}
         if not approved and target in {"script", "keyframe"}:
             row.data = {**row.data, "clip_approved": False}
         row.revision += 1

@@ -15,13 +15,15 @@ const seconds = (n:number|null|undefined) => n==null?'Chưa đủ số đo':`${n
 
 export function PendingClipSettings({url}:{url:string}) {
   const [steps,setSteps] = useState(4);
+  const [shortenLast,setShortenLast] = useState(false);
   const [error,setError] = useState('');
   const [busy,setBusy] = useState(false);
   const [saved,setSaved] = useState(false);
   const client = useQueryClient();
-  return <form onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');setSaved(false);try{await performanceCall(url,{clip_steps:steps});await client.invalidateQueries();setSaved(true);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>
+  return <form onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');setSaved(false);try{await performanceCall(url,{clip_steps:steps,shorten_last_shot:shortenLast});await client.invalidateQueries();setSaved(true);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>
     <label className="field"><span>Steps Wan cho shot chưa gửi · Lightning mặc định 4</span><input type="number" min="2" max="50" required value={steps} onChange={e=>setSteps(Number(e.target.value))}/></label>
-    <p>Giữ nguyên độ phân giải, 81 frame, 16 fps và các shot đã gửi hoặc hoàn thành.</p>
+    <label className="check"><input type="checkbox" checked={shortenLast} onChange={e=>setShortenLast(e.target.checked)}/>Rút shot cuối của cảnh còn 4n+1 frame nếu vẫn phủ audio</label>
+    <p>Giữ nguyên độ phân giải, 16 fps và các shot đã gửi hoặc hoàn thành. Shot thường vẫn 81 frame.</p>
     <button disabled={busy}>Áp dụng cho phần chưa gửi</button>{saved&&<p role="status">Đã lưu cấu hình phần còn thiếu. Tiếp tục khi sẵn sàng.</p>}{error&&<p role="alert">{error}</p>}
   </form>;
 }

@@ -36,6 +36,26 @@ MODEL_FILES = [
     ("wan-vae", REPOS["wan"], "split_files/vae/wan_2.1_vae.safetensors", "models/vae"),
 ]
 
+# Deliberately excluded from the base installer; choosing a profile must not
+# silently download optional multi-GB files onto every GPU.
+OPTIONAL_MODEL_FILES = {
+    'qwen-image-lightning-fp8': ('lightx2v/Qwen-Image-Lightning',
+        'Qwen-Image-fp8-e4m3fn-Lightning-4steps-V1.0-bf16.safetensors', 'models/loras'),
+    'rife-v4.26': ('Comfy-Org/frame_interpolation',
+        'frame_interpolation/rife_v4.26.safetensors', 'models/frame_interpolation'),
+}
+RIFE_SHA256 = '151874592c877740e5db11522f4514df569eeafb0a0fcb2696f16e9e8d317c94'
+
+
+def resolve_optional_model(name: str, token: str | None = None):
+    if name not in OPTIONAL_MODEL_FILES:
+        raise ValueError('Model tùy chọn không được hỗ trợ.')
+    repo, filename, destination = OPTIONAL_MODEL_FILES[name]
+    expected = RIFE_SHA256 if name == 'rife-v4.26' else None
+    asset = resolve_model(ModelAsset(name=name, repo=repo, filename=filename,
+                                    destination=destination, sha256=expected), token)
+    return asset.model_dump(mode='json')
+
 
 def pack_info(lock: dict | None = None) -> dict:
     return {
@@ -170,21 +190,35 @@ def resolve_pack(token: str | None = None) -> dict:
 
 
 def load_graph(name: str) -> dict:
-    if name not in {"qwen_image", "qwen_edit", "wan_i2v"}:
+    if name not in {"qwen_image", "qwen_edit", "wan_i2v", "rife_post"}:
         raise ValueError("Workflow không thuộc bộ cho phép.")
     return json.loads((WORKFLOWS / f"{name}.json").read_text(encoding="utf-8"))
 
 
 def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list[str],
               output_prefix: str, steps: int | None = None, shot: int = 0,
-              project_settings: dict | None = None) -> dict:
+              project_settings: dict | None = None, *, frames: int = 81,
+              generation_version: int = 2) -> dict:
     from studio.formats import resolve_format
     graph = copy.deepcopy(load_graph(name))
     width, height = resolve_format(quality, project_settings)["render_size"]
-    if name == "qwen_image":
+    if name == 'rife_post':
+        if len(image_names) != 1:
+            raise ValueError('RIFE cần đúng một clip nguồn đã lưu.')
+        graph['1']['inputs']['file'] = image_names[0]
+        graph['6']['inputs']['filename_prefix'] = output_prefix
+    elif name == "qwen_image":
         graph["6"]["inputs"]["text"] = prompt
         graph["58"]["inputs"].update(width=width, height=height)
-        graph["3"]["inputs"].update(seed=seed, steps=steps or 20)
+        lightning = generation_version >= 3 and (project_settings or {}).get('keyframe_profile') == 'lightning'
+        if lightning:
+            graph['67'] = {'class_type': 'LoraLoaderModelOnly', 'inputs': {
+                'model': ['37', 0], 'lora_name':
+                'Qwen-Image-fp8-e4m3fn-Lightning-4steps-V1.0-bf16.safetensors', 'strength_model': 1}}
+            graph['66']['inputs']['model'] = ['67', 0]
+            graph['66']['inputs']['shift'] = 3
+            graph['3']['inputs']['cfg'] = 1
+        graph["3"]["inputs"].update(seed=seed, steps=steps or (4 if lightning else 20))
         graph["60"]["inputs"]["filename_prefix"] = output_prefix
     elif name == "qwen_edit":
         if not image_names:
@@ -200,15 +234,18 @@ def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list
             graph[node_id] = {"class_type": "LoadImage", "inputs": {"image": image}}
             for encoder in ["110", "111"]:
                 graph[encoder]["inputs"][f"image{i}"] = [node_id, 0]
-        graph["111"]["inputs"]["prompt"] = prompt
+        graph["111"]["inputs"]["prompt"] = (
+            'Preserve the identities and historical details of the reference images. '
+            'Create this scene: ' + prompt if generation_version >= 3 else prompt)
         graph["3"]["inputs"].update(seed=seed, steps=steps or 4)
         graph["60"]["inputs"]["filename_prefix"] = output_prefix
     else:
         if not image_names:
             raise ValueError("Cần ảnh đại diện đã duyệt trước khi tạo clip.")
         graph["97"]["inputs"]["image"] = image_names[0]
-        graph["93"]["inputs"]["text"] = prompt + f" Shot variation {shot+1}; no text or subtitles."
-        graph["98"]["inputs"].update(width=width, height=height)
+        graph["93"]["inputs"]["text"] = (prompt + f" Shot variation {shot+1}; no text or subtitles."
+            if generation_version < 3 else prompt + f" Shot {shot+1}: continuous natural motion, clean historical imagery.")
+        graph["98"]["inputs"].update(width=width, height=height, length=frames)
         count = max(2, steps or 4)
         graph["86"]["inputs"].update(noise_seed=seed+shot, steps=count, end_at_step=count//2)
         graph["85"]["inputs"].update(steps=count, start_at_step=count//2, end_at_step=count)

@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import select
 
 from studio.backend import ReconcileRequired, RemoteBackend
-from studio.media import probe, render_film, shot_count
+from studio.media import probe, render_film, scene_clip_count, shot_count
 from studio.models import Artifact, Installation, Job, JobEvent, Project, Scene, Source
 from studio.packs import PACK_ID, load_graph
 from studio.schemas import JobInput, SceneInput
@@ -63,7 +63,7 @@ class StudioJobs:
                 raise KeyError(job_id)
             if job.status == 'abandoned':
                 return self.service.read(job)
-            if (job.kind not in {'outline', 'script', 'speech', 'keyframe', 'clip'} or
+            if (job.kind not in {'outline', 'script', 'speech', 'keyframe', 'clip', 'image_review'} or
                     job.status not in {'reconciling', 'failed', 'interrupted', 'paused'} or
                     not self.remote_pending(job.result)):
                 raise ValueError('Chỉ bỏ lượt inference chưa đối chiếu, không bỏ tác vụ đang chạy local.')
@@ -91,9 +91,59 @@ class StudioJobs:
             if any(job.result.get('maintenance_pending') for job in session.scalars(select(Job).where(Job.host_id == host_id))):
                 raise ValueError('Bảo trì runtime chưa rõ trạng thái; khôi phục runtime trước khi đổi host hoặc chạy recipe.')
 
+    def optional_ready(self, host_id, name):
+        from studio.installations import identity
+        saved = json.loads(self.hosts.setting(f'studio_optional:{host_id}:{name}') or '{}')
+        return bool(saved and saved.get('identity') == identity(self.hosts._require_host(host_id)) and
+                    saved.get('options') == self.hosts.options_for(host_id).model_dump())
+
+    def install_optional(self, host_id, name):
+        from studio.installations import identity
+        from studio.packs import OPTIONAL_MODEL_FILES, resolve_optional_model
+        if name not in OPTIONAL_MODEL_FILES:
+            raise ValueError('Model tùy chọn không thuộc Historia.')
+        self.host_idle(host_id)
+        if self.installations.state(host_id)['status'] not in {'installed', 'verified', 'verify_failed'}:
+            raise ValueError('Cần cài bộ nền trước khi thêm model tùy chọn.')
+        asset = resolve_optional_model(name, self.hosts.setting('hf_token'))
+        host = self.hosts._require_host(host_id)
+        snapshot = {'asset': asset, 'identity': identity(host),
+                    'options': self.hosts.options_for(host_id).model_dump()}
+        with self.service.sessions() as session:
+            job = Job(host_id=host_id, kind='optional_model', input_hash=canonical_hash(snapshot), snapshot=snapshot)
+            session.add(job)
+            session.commit()
+        return self.service.read(job)
+
+    async def execute_optional(self, job):
+        from ghm.manifests import ModelAsset
+        from ghm.model_download import download
+        from studio.installations import identity
+        from studio.installer import InstallExecutor
+        from studio.packs import OPTIONAL_MODEL_FILES, check_model_access
+        asset = ModelAsset.model_validate(job.snapshot['asset'])
+        if asset.name not in OPTIONAL_MODEL_FILES:
+            raise ValueError('Model tùy chọn không hợp lệ.')
+        host = self.hosts._require_host(job.host_id)
+        options = self.hosts.options_for(job.host_id)
+        if job.snapshot['identity'] != identity(host) or job.snapshot['options'] != options.model_dump():
+            raise ValueError('Host/cấu hình cài model đã đổi; không tải lên máy khác.')
+        await asyncio.to_thread(check_model_access, {'models':[job.snapshot['asset']], 'snapshots':[]}, self.hosts.setting('hf_token'))
+        executor = self.hosts.executor_for(host)
+        try:
+            locked = InstallExecutor(executor, options.root)
+            await download(locked, asset, options.comfy_root, self.hosts.setting('hf_token'), 14400)
+        finally:
+            await executor.close()
+        self.hosts.save_setting(f'studio_optional:{job.host_id}:{asset.name}', json.dumps({
+            'identity': job.snapshot['identity'], 'options': job.snapshot['options'],
+            'sha256': asset.sha256, 'revision': asset.revision}))
+        self.event(job.id, f'Đã kiểm tra checksum model tùy chọn {asset.name}.')
+
     @staticmethod
     def remote_pending(result):
         return bool(result.get('maintenance_pending') or result.get('submissions') or result.get('speech_pending') or
+                    result.get('review_pending') or
                     result.get('outline_pending') or result.get('chapter_pending') is not None)
 
     def recover(self):
@@ -166,7 +216,7 @@ class StudioJobs:
     def set_pending_clip_config(self, job, config):
         """Called under a writer transaction. Never change an existing prompt intent."""
         from studio.schemas import PendingClipConfig
-        config = PendingClipConfig.model_validate(config).model_dump()
+        config = PendingClipConfig.model_validate(config).model_dump(exclude_unset=True)
         duration = probe(self.service.artifact_path(job.snapshot['scene']['speech_id']))['duration']
         protected = job.result.get('submissions', {})
         with self.service.sessions() as session:
@@ -211,6 +261,27 @@ class StudioJobs:
                                   'clip_config_version': run.checkpoint.get('clip_config_version', 0) + 1}
             session.commit()
         return self.runs.get(run_id) if run_id else self.service.read(self.service.require(Job, job_id))
+
+    def approve_chain_frame(self, job_id, index, artifact_id):
+        from sqlalchemy import text
+        with self.service.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            job = session.get(Job, job_id)
+            if not job:
+                raise KeyError(job_id)
+            if (job.kind != 'clip' or job.status != 'paused' or
+                    job.snapshot.get('scene', {}).get('image_strategy') != 'chain_last' or
+                    job.result.get('chain_pending_index') != index or
+                    job.result.get('chain_frames', {}).get(str(index)) != artifact_id or
+                    (self.current and self.current[0] == job_id)):
+                raise ValueError('Ảnh nối không thuộc shot đang chờ duyệt.')
+            self.service.artifact_path(artifact_id)
+            approved = set(job.result.get('chain_approved', []))
+            approved.add(str(index))
+            job.result = {**job.result, 'chain_approved': sorted(approved),
+                          'chain_pending_index': None}
+            session.commit()
+        return self.service.read(self.service.require(Job, job_id))
 
     def artifact_valid(self, artifact_id):
         if not artifact_id:
@@ -295,33 +366,76 @@ class StudioJobs:
     @staticmethod
     def input_identity(project, scene, kind):
         from studio.generation import identity_scene
-        settings = {k: v for k, v in project.items() if k not in {'scenes', 'created_at', 'updated_at', 'tts_device'}}
+        settings = {k: v for k, v in project.items() if k not in {'scenes', 'created_at', 'updated_at',
+            'tts_device', 'keyframe_profile', 'frame_interpolation', 'audio_mix_profile'}}
+        if kind == 'keyframe' and project.get('keyframe_profile', 'standard') != 'standard':
+            settings['keyframe_profile'] = project['keyframe_profile']
+        if kind in {'export', 'rife'} and project.get('frame_interpolation', 'none') != 'none':
+            settings['frame_interpolation'] = project['frame_interpolation']
+        if kind == 'export' and project.get('audio_mix_profile', 'legacy') != 'legacy':
+            settings['audio_mix_profile'] = project['audio_mix_profile']
         if scene:
             scene = identity_scene(scene, kind)
-            fields = (set(SceneInput.model_fields) - {'keyframe_steps', 'clip_steps'}) | {'script_approved'}
+            fields = (set(SceneInput.model_fields) - {'keyframe_steps', 'clip_steps', 'motion',
+                'image_strategy', 'shorten_last_shot'}) | {'script_approved'}
             if kind == 'clip':
                 fields |= {'keyframe_id', 'keyframe_approved', 'speech_id'}
-            return {'project': settings, 'scene': {k: scene.get(k) for k in sorted(fields)}}
+            if kind == 'rife':
+                return {'profile': project.get('frame_interpolation'), 'clip_ids': scene.get('clip_ids')}
+            values = {k: scene.get(k) for k in sorted(fields)}
+            if kind == 'clip':
+                values.update({k: scene[k] for k in ('motion', 'image_strategy', 'shorten_last_shot') if k in scene})
+            return {'project': settings, 'scene': values}
         return {'project': settings, 'scenes': project['scenes']}
 
     def submit(self, project_id: str, request: JobInput, validate_only=False, transaction=None):
         from studio.models import ProductionRun
         with self.service.sessions() as run_session:
             if run_session.scalar(select(ProductionRun.id).where(ProductionRun.project_id == project_id,
-                    ProductionRun.status.in_(['running', 'pause_requested', 'paused', 'reconciling', 'duration_review']))):
+                    ProductionRun.status.in_(['running', 'pause_requested', 'paused', 'reconciling', 'duration_review',
+                                              *([] if request.kind == 'image_review' else ['keyframe_review'])]))):
                 raise ValueError('Lượt sản xuất tự động đang giữ dự án; không chạy job thủ công đồng thời.')
         project = self.service.project(project_id)
-        if request.kind not in {"outline", "script", "keyframe", "speech", "clip", "export"}:
+        if request.kind not in {"outline", "script", "keyframe", "speech", "clip", "rife", "image_review", "export"}:
             raise ValueError("Tác vụ này chưa được mở trong bản Studio hiện tại; không chạy giả lập.")
         host_id = request.host_id or project.get("host_id")
+        from studio.script_provider import selected_provider
+        script_provider = selected_provider(self.hosts) if request.kind in {'outline', 'script'} else None
+        if script_provider:
+            host_id = None
         scene = next((s for s in project["scenes"] if s["id"] == request.scene_id), None)
+        if request.kind in {'clip', 'rife'} and scene and scene.get('motion', 'wan') != 'wan':
+            host_id = None
         if request.kind in {"keyframe", "speech", "clip"}:
             if not scene:
                 raise ValueError("Chọn cảnh trong dự án trước khi tạo media.")
             if not scene.get("script_approved"):
                 raise ValueError("Duyệt lời đọc và nguồn của cảnh trước khi tạo media.")
+        if request.kind == 'keyframe' and scene.get('image_strategy', 'shared') == 'per_shot' and not scene.get('speech_id'):
+            raise ValueError('Ảnh riêng từng shot cần audio đã đo để xác định số shot.')
         if request.kind == "clip" and (not scene or not scene.get("keyframe_approved") or not scene.get("speech_id")):
             raise ValueError("Duyệt ảnh và tạo giọng đọc trước khi tạo clip.")
+        if request.kind == 'clip' and scene.get('image_strategy') == 'per_shot' and not scene.get('shot_keyframes_approved'):
+            raise ValueError('Duyệt toàn bộ ảnh riêng từng shot trước khi chạy Wan.')
+        if request.kind == 'rife':
+            if not scene or not scene.get('clip_ids') or not scene.get('clip_approved'):
+                raise ValueError('RIFE cần clip nguồn đã lưu và duyệt.')
+            if project.get('frame_interpolation') != 'rife24':
+                raise ValueError('Chọn nội suy RIFE cho dự án trước khi tạo job.')
+        if request.kind == 'image_review':
+            if not scene or not scene.get('keyframe_id'):
+                raise ValueError('Chưa có ảnh để Qwen3-VL kiểm tra.')
+            available = list(scene.get('shot_keyframes') or [scene['keyframe_id']])
+            if request.review_mode == 'compare':
+                if len(request.candidate_ids) != 2 or any(a not in available for a in request.candidate_ids):
+                    raise ValueError('So sánh cần đúng hai ảnh đã lưu của cảnh.')
+                candidates = request.candidate_ids
+            else:
+                candidates = available
+            if len(candidates) > 20:
+                raise ValueError('Kiểm ảnh AI tối đa 20 ảnh mỗi lần.')
+            for candidate in candidates:
+                self.service.artifact_path(candidate)
         if request.kind == "script":
             if not project.get("outline_approved"):
                 raise ValueError("Duyệt dàn ý trước khi viết kịch bản.")
@@ -332,16 +446,22 @@ class StudioJobs:
         if request.kind == "export":
             if not project["scenes"] or any(not s.get("clip_approved") or not s.get("speech_id") or not s.get("script_approved") for s in project["scenes"]):
                 raise ValueError("Duyệt đủ cảnh, lời đọc và clip trước khi xuất phim.")
+            if project.get('frame_interpolation') == 'rife24' and any(
+                    len(s.get('rife_clip_ids') or []) != len(s.get('clip_ids') or []) for s in project['scenes']):
+                raise ValueError('Nội suy RIFE còn thiếu; chạy job RIFE cho từng cảnh trước khi xuất final.')
             host_id = None
-        else:
+        elif not script_provider and not (request.kind in {'clip', 'rife'} and scene and scene.get('motion', 'wan') != 'wan'):
             if not host_id:
+                if request.kind == 'image_review':
+                    raise ValueError('Qwen3-VL kiểm ảnh chưa khả dụng: dự án chưa chọn GPU. Bạn vẫn có thể duyệt ảnh thủ công.')
                 raise ValueError("Chọn GPU cho dự án trong phần Thiết lập.")
             host = self.hosts._require_host(host_id)
             if not host.pinned_fingerprint:
                 raise ValueError("Xác nhận fingerprint SSH trước khi dùng GPU.")
             self.assert_no_abandoned_remote(host_id)
             self.recipes.assert_recipes_idle(host_id)
-            needed = {'outline': ['llm'], 'script': ['llm'], 'speech': ['tts'], 'keyframe': ['qwen_image'], 'clip': ['wan_i2v']}.get(request.kind, [])
+            needed = {'outline': ['llm'], 'script': ['llm'], 'image_review': ['llm'],
+                      'speech': ['tts'], 'keyframe': ['qwen_image'], 'clip': ['wan_i2v']}.get(request.kind, [])
             if request.kind == 'keyframe' and scene:
                 refs = list(scene.get('reference_ids') or [])
                 for character in project['characters']:
@@ -349,17 +469,27 @@ class StudioJobs:
                         refs.extend(character.get('reference_ids') or [])
                 if refs:
                     needed = ['qwen_image', 'qwen_edit']
+                elif project.get('keyframe_profile') == 'lightning' and not self.optional_ready(host_id, 'qwen-image-lightning-fp8'):
+                    raise ValueError('Cài LoRA Qwen-Image Lightning tùy chọn và kiểm tra checksum trên GPU này trước.')
             if not self.installations.component_proven(host_id, needed):
                 if request.kind == 'speech':
                     raise ValueError('Giọng đọc chưa sẵn sàng trên GPU này. Cần bản cài hoàn tất, đúng máy và đúng cấu hình. Kiểm chứng output là bước riêng, không chặn lần tạo giọng đầu tiên sau khi cài xong.')
+                if request.kind == 'image_review':
+                    raise ValueError('Qwen3-VL kiểm ảnh chưa khả dụng trên GPU này. Bạn vẫn có thể duyệt ảnh thủ công.')
                 raise ValueError('Model của tác vụ này chưa có lần chạy thành công trên GPU hiện tại. Bộ cài đầy đủ vẫn chưa kiểm chứng.')
+            if request.kind == 'rife' and not self.optional_ready(host_id, 'rife-v4.26'):
+                raise ValueError('Cài và kiểm tra checksum model RIFE 4.26 trước.')
         project_snapshot = dict(project)
         if request.kind == "speech":
             from studio.tts_device import new_tts_device
             project_snapshot["tts_device"] = new_tts_device(project)
-        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(), 'generation_version': 2,
-                    "workflow_hashes": {n: canonical_hash(load_graph(n)) for n in ("qwen_image", "qwen_edit", "wan_i2v")}}
-        hashed = canonical_hash({'kind': request.kind, 'host': host_id,
+        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(), 'generation_version': 3,
+                    'script_provider': script_provider, 'prompt_version': 3,
+                    'image_candidates': candidates if request.kind == 'image_review' else None,
+                    "workflow_hashes": {n: canonical_hash(load_graph(n)) for n in
+                        (("rife_post",) if request.kind == 'rife' else ("qwen_image", "qwen_edit", "wan_i2v"))}}
+        hashed = canonical_hash({'kind': request.kind, 'host': host_id, 'script_provider': script_provider,
+            'image_candidates': snapshot['image_candidates'], 'review_mode': request.review_mode,
             'inputs': self.input_identity(project, scene, request.kind), 'workflow_hashes': snapshot['workflow_hashes']})
         with (nullcontext(transaction) if transaction is not None else self.service.sessions()) as session:
             if transaction is None:
@@ -418,7 +548,7 @@ class StudioJobs:
 
     def pause(self, job_id):
         job = self.service.require(Job, job_id)
-        if job.kind != 'clip' or job.status not in {'queued', 'running', 'paused'}:
+        if job.kind not in {'clip', 'rife'} or job.status not in {'queued', 'running', 'paused'}:
             raise ValueError('Chỉ tạm dừng clip đang chờ/chạy ở ranh giới shot.')
         self.patch(job_id, result={**job.result, 'pause_requested': True},
                    status='paused' if job.status in {'queued', 'paused'} else 'running')
@@ -496,7 +626,7 @@ class StudioJobs:
                         self.installations.patch(job.host_id, 'interrupted')
                     raise
             except ReconcileRequired as exc:
-                message = str(exc) if job.kind == "speech" else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
+                message = str(exc) if job.kind in {'speech', 'image_review'} else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
                 self.patch(job.id, status="reconciling", error=message)
                 if job.kind in {'install', 'verify'}:
                     self.installations.patch(job.host_id, 'interrupted')
@@ -508,7 +638,7 @@ class StudioJobs:
             except Exception as exc:  # noqa: BLE001 -- one failed job must not kill the durable worker
                 message = str(exc) if isinstance(exc, ValueError) else "Tác vụ thất bại. Kiểm tra dịch vụ GPU, model và dung lượng ổ."
                 pending = self.remote_pending(self.service.require(Job, job.id).result)
-                self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech'} else "failed", error=message[:2000])
+                self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review'} else "failed", error=message[:2000])
                 if job.kind in {'install', 'verify'}:
                     self.installations.patch(job.host_id, 'install_failed' if job.kind == 'install' else 'verify_failed')
             finally:
@@ -534,7 +664,7 @@ class StudioJobs:
                                   'speech_output': artifact['id'],
                                   **({'speech_device': device, 'codec_device': speech_metadata.get('codec_device', 'cpu')} if device in {'cuda', 'cpu'} else {})})
         self.scene_result(job.scene_id, job=job, speech_id=artifact["id"], duration=duration,
-                          shot_count=shot_count(duration), clip_ids=[], clip_approved=False)
+                          shot_count=scene_clip_count(job.snapshot['scene'], duration), clip_ids=[], clip_approved=False)
 
     def scene_result(self, scene_id, job=None, **values):
         with self.service.sessions() as session:
@@ -558,9 +688,83 @@ class StudioJobs:
                     saved.result = {**saved.result, 'stale': True, 'retained_output': values}
                     session.commit()
                     return
+            changed_clip = 'clip_ids' in values and values['clip_ids'] != row.data.get('clip_ids')
             row.data = {**row.data, **values}
+            if changed_clip:
+                row.data.pop('rife_clip_ids', None)
             row.revision += 1
             session.commit()
+
+    async def execute_rife(self, job):
+        from studio.media import render_rife24
+        scene = job.snapshot['scene']
+        source_ids = list(scene.get('clip_ids') or [])
+        if not source_ids:
+            raise ValueError('RIFE thiếu clip nguồn.')
+        if scene.get('motion', 'wan') != 'wan':
+            # Still-image modes already produce 24 fps locally.
+            self.scene_result(job.scene_id, job=job, rife_clip_ids=source_ids)
+            return
+        ids = []
+        log = lambda message: self.event(job.id, message)
+        checkpoint = lambda stage, value: self.checkpoint(job.id, stage, value)
+        async with self.backend.generation_session(job):
+            for index, source_id in enumerate(source_ids):
+                current = self.service.require(Job, job.id)
+                if current.status == 'cancelling':
+                    raise asyncio.CancelledError()
+                if current.result.get('pause_requested'):
+                    raise PauseAtBoundary()
+                source = self.service.artifact_path(source_id)
+                name = f'rife24-{index}.mp4'
+                with self.service.sessions() as session:
+                    existing = session.scalar(select(Artifact).where(Artifact.job_id == job.id, Artifact.name == name))
+                if existing:
+                    self.service.artifact_path(existing.id)
+                    ids.append(existing.id)
+                    continue
+                with self.service.sessions() as session:
+                    remote = session.scalar(select(Artifact).where(Artifact.job_id == job.id,
+                        Artifact.name == f'rife-{index}.mp4'))
+                if remote:
+                    interpolated = self.service.artifact_path(remote.id)
+                else:
+                    interpolated = await self.backend.generate(current, 'rife_post', '', [source], 0,
+                        job.snapshot['project']['quality'], log, checkpoint, f'rife-{index}')
+                    self.service.artifact(interpolated, job.project_id, f'rife-{index}.mp4', job.id,
+                                          {'source_clip_id': source_id, 'fps': 48})
+                target = self.service.job_directory(job.id) / name
+                await asyncio.to_thread(render_rife24, interpolated, target, source)
+                artifact = self.service.artifact(target, job.project_id, name, job.id,
+                    {'source_clip_id': source_id, 'fps': 24, 'interpolation': 'rife_v4.26'})
+                ids.append(artifact['id'])
+                self.patch(job.id, progress=round((index+1)*95/len(source_ids)))
+        self.scene_result(job.scene_id, job=job, rife_clip_ids=ids)
+
+    async def execute_image_review(self, job):
+        state = self.service.require(Job, job.id).result
+        if state.get('review_output') is not None:
+            return
+        if state.get('review_pending'):
+            raise ReconcileRequired('Lượt kiểm ảnh Qwen3-VL chưa rõ kết quả; không tự gửi lại.')
+        candidates = job.snapshot.get('image_candidates') or []
+        images = [self.service.artifact_path(a) for a in candidates]
+        mode = job.snapshot.get('request', {}).get('review_mode')
+        if mode == 'compare':
+            prompt = ('Compare the two historical scene images. Return JSON with scores from 0 to 10 '
+                      'for composition, historical plausibility and character consistency, plus concise '
+                      'suspected defects. Do not approve either image; a human decides.')
+        else:
+            prompt = ('Inspect each historical scene image in order. Return JSON {"flags":[{"index":1,'
+                      '"suspicious":false,"reason":"..."}]}. Flag only visible anomalies such as '
+                      'modern objects, malformed faces/hands, text artifacts or character drift. '
+                      'Do not approve images; a human decides.')
+        self.patch(job.id, result={**state, 'review_pending': True})
+        output = await self.backend.language(job, prompt, images,
+            lambda message: self.event(job.id, message))
+        latest = self.service.require(Job, job.id).result
+        self.patch(job.id, result={**latest, 'review_pending': False, 'review_output': output,
+                                   'review_candidate_ids': candidates})
 
     async def chapter_script(self, job, log):
         project = job.snapshot['project']
@@ -588,6 +792,31 @@ class StudioJobs:
                     'topic': project['topic'], 'chapter': chapter, 'chapter_number': index+1,
                     'target_seconds': project['duration_seconds']/len(chapters),
                     'characters': project['characters'], 'sources': sources}, ensure_ascii=False))
+            if job.snapshot.get('prompt_version', 2) >= 3:
+                prompt += ('\nLời đọc và trích dẫn bằng tiếng Việt; visual_prompt bằng tiếng Anh, '
+                           'mô tả hành động và bố cục theo hướng khẳng định, tránh chuyển động lặp.')
+                from statistics import median
+                with self.service.sessions() as session:
+                    previous = list(session.scalars(select(Job).where(Job.kind == 'speech',
+                        Job.status == 'completed').order_by(Job.created_at.desc()).limit(100)))
+                rates = []
+                for old in previous:
+                    if (old.snapshot.get('project') or {}).get('voice') != project.get('voice'):
+                        continue
+                    narration = (old.snapshot.get('scene') or {}).get('narration', '')
+                    saved_id = old.result.get('speech_output')
+                    try:
+                        artifact = self.service.require(Artifact, saved_id) if saved_id else None
+                    except KeyError:
+                        artifact = None
+                    seconds = artifact.data.get('duration') if artifact else None
+                    if narration and seconds and seconds > 0:
+                        rates.append(len(narration.split()) / seconds)
+                if rates:
+                    words = round(median(rates) * project['duration_seconds'] / len(chapters))
+                    prompt += (f'\nGợi ý độ dài lời đọc khoảng {words} từ cho chương này '
+                               f'(theo {len(rates)} mẫu TTS cùng giọng đã đo). Đây chỉ là gợi ý; '
+                               'số shot cuối cùng sẽ tính từ audio thực.')
             started = time.monotonic()
             output = state.get('chapter_outputs', {}).get(str(index))
             if output is None:
@@ -654,11 +883,17 @@ class StudioJobs:
             self.assert_no_abandoned_remote(job.host_id)
         if job.kind == 'runtime':
             return await self.runtime.execute(job)
+        if job.kind == 'optional_model':
+            return await self.execute_optional(job)
         if job.kind == 'benchmark':
             from studio.benchmark import execute
             return await execute(self, job)
         if job.kind == 'video_test':
             return await self.installations.execute_video_test(job)
+        if job.kind == 'rife':
+            return await self.execute_rife(job)
+        if job.kind == 'image_review':
+            return await self.execute_image_review(job)
         if job.kind in {'install', 'verify'}:
             return await self.installations.execute(job)
         project, scene = job.snapshot["project"], job.snapshot["scene"]
@@ -724,7 +959,7 @@ class StudioJobs:
                 artifact = self.service.read(self.service.require(Artifact, state['speech_output']))
                 duration = artifact['duration']
                 self.scene_result(job.scene_id, job=job, speech_id=artifact['id'], duration=duration,
-                                  shot_count=shot_count(duration), clip_ids=[], clip_approved=False)
+                                  shot_count=scene_clip_count(scene, duration), clip_ids=[], clip_approved=False)
                 return
             self.patch(job.id, result={**state, 'speech_pending': True})
             try:
@@ -736,6 +971,36 @@ class StudioJobs:
                 raise
             self._finish_speech(job, path)
         elif job.kind in {"keyframe", "clip"}:
+            if job.kind == 'clip' and scene.get('motion', 'wan') != 'wan':
+                from studio.formats import resolve_format
+                from studio.media import render_still_clip
+                started_local = time.monotonic()
+                image = self.service.artifact_path(scene['keyframe_id'])
+                duration = probe(self.service.artifact_path(scene['speech_id']))['duration']
+                target = self.service.job_directory(job.id) / 'clip-0.mp4'
+                with self.service.sessions() as session:
+                    existing = session.scalar(select(Artifact).where(Artifact.job_id == job.id,
+                        Artifact.name == 'clip-0.mp4'))
+                if existing:
+                    self.service.artifact_path(existing.id)
+                    artifact = self.service.read(existing)
+                else:
+                    await asyncio.to_thread(render_still_clip, image, target, duration,
+                        resolve_format(project['quality'], project)['render_size'], scene['motion'])
+                    artifact = self.service.artifact(target, job.project_id, 'clip-0.mp4', job.id,
+                        {'motion': scene['motion'], 'keyframe_id': scene['keyframe_id']})
+                import math
+
+                from studio.generation import clip_config
+                local_config = {**clip_config(project, scene), 'frames': math.ceil(duration*24),
+                    'fps': 24, 'steps': 0, 'shot_seconds': math.ceil(duration*24)/24,
+                    'motion': scene['motion']}
+                state = self.service.require(Job, job.id).result
+                self.patch(job.id, result={**state, 'local_shots': {'clip-0': {
+                    'state': 'downloaded', 'artifact_id': artifact['id'], 'config': local_config,
+                    'timing': {'total_seconds': time.monotonic()-started_local}}}})
+                self.scene_result(job.scene_id, job=job, clip_ids=[artifact['id']], clip_approved=False)
+                return
             prompt = f"{project['style']}. {project['era']}. {project['location']}. {scene['visual_prompt']}. {scene['camera']}"
             refs = list(scene["reference_ids"])
             for character in project["characters"]:
@@ -748,7 +1013,8 @@ class StudioJobs:
             images = [self.service.artifact_path(self.service.require(Source, ref).data["artifact_id"]) for ref in refs]
             if job.kind == "clip":
                 images = [self.service.artifact_path(scene["keyframe_id"])]
-            count = shot_count(probe(self.service.artifact_path(scene["speech_id"]))["duration"]) if job.kind == "clip" else 1
+            count = (scene_clip_count(scene, probe(self.service.artifact_path(scene['speech_id']))['duration'])
+                if job.kind == 'clip' or (job.kind == 'keyframe' and scene.get('image_strategy') == 'per_shot') else 1)
             ids = []
             for index in range(count):
                 boundary = self.service.require(Job, job.id)
@@ -766,16 +1032,45 @@ class StudioJobs:
                     self.service.artifact_path(existing.id)
                     ids.append(existing.id)
                     continue
+                if job.kind == 'keyframe' and scene.get('image_strategy') == 'per_shot' and index == 0 and scene.get('keyframe_id') and scene.get('keyframe_approved'):
+                    self.service.artifact_path(scene['keyframe_id'])
+                    ids.append(scene['keyframe_id'])
+                    continue
+                if job.kind == 'clip' and scene.get('image_strategy') == 'per_shot':
+                    selected = scene.get('shot_keyframes') or []
+                    if len(selected) != count:
+                        raise ValueError('Thiếu ảnh riêng cho shot; không gửi Wan.')
+                    images = [self.service.artifact_path(selected[index])]
+                if job.kind == 'clip' and scene.get('image_strategy') == 'chain_last' and index:
+                    from studio.media import extract_last_frame
+                    state = self.service.require(Job, job.id).result
+                    frames = dict(state.get('chain_frames', {}))
+                    source = frames.get(str(index))
+                    if not source:
+                        target = self.service.job_directory(job.id) / f'chain-{index}.png'
+                        await asyncio.to_thread(extract_last_frame, self.service.artifact_path(ids[-1]), target)
+                        image_artifact = self.service.artifact(target, job.project_id,
+                            f'chain-{index}.png', job.id, {'from_clip_id': ids[-1]})
+                        source = image_artifact['id']
+                        frames[str(index)] = source
+                        self.patch(job.id, result={**state, 'chain_frames': frames,
+                            'chain_pending_index': index})
+                    images = [self.service.artifact_path(source)]
+                    if str(index) not in self.service.require(Job, job.id).result.get('chain_approved', []):
+                        raise PauseAtBoundary()
                 graph = "wan_i2v" if job.kind == "clip" else "qwen_edit" if images else "qwen_image"
                 framing = ['Wide establishing shot, reveal the environment', 'Medium shot, focus on the main action',
                            'Close-up, emphasize a historically grounded detail', 'Side tracking shot, follow movement',
                            'Over-the-shoulder view, show spatial relationships']
-                shot_prompt = prompt if job.kind == 'keyframe' else (
+                shot_prompt = (prompt + f'\nShot {index+1}/{count}: {framing[index % len(framing)]}.'
+                    if job.kind == 'keyframe' and count > 1 else prompt) if job.kind == 'keyframe' else (
                     prompt + f'\nShot {index+1}/{count}: {framing[index % len(framing)]}. '
                     f'Unique moment {index+1} in the scene progression. No repeated or slowed footage.')
                 started = time.monotonic()
                 from studio.generation import stage_steps
-                path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images, scene["seed"], project["quality"], log, checkpoint, stage, stage_steps(scene, job.kind, graph), index)
+                path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images,
+                    scene['seed'] + index if job.kind == 'keyframe' and count > 1 else scene['seed'], project["quality"], log, checkpoint, stage,
+                    stage_steps(scene, job.kind, graph, project, job.snapshot.get('generation_version', 2)), index)
                 stored = time.monotonic()
                 measurement = self.service.require(Job, job.id).result.get('submissions', {}).get(stage, {})
                 artifact = self.service.artifact(path, job.project_id, stage + (".mp4" if job.kind == "clip" else ".png"), job.id,
@@ -789,17 +1084,28 @@ class StudioJobs:
                         'total_seconds': measurement.get('timing', {}).get('total_seconds', 0) + storage_seconds}})
                 ids.append(artifact["id"])
                 self.patch(job.id, progress=round((index+1)*95/count))
-            self.scene_result(job.scene_id, job=job, **({"keyframe_id": ids[0], "keyframe_approved": False, "clip_ids": [], "clip_approved": False} if job.kind == "keyframe" else {"clip_ids": ids, "clip_approved": False}))
+            self.scene_result(job.scene_id, job=job, **({"keyframe_id": ids[0], "keyframe_approved": False,
+                **({'shot_keyframes': ids, 'shot_keyframes_approved': False}
+                   if scene.get('image_strategy') == 'per_shot' else {}),
+                "clip_ids": [], "clip_approved": False} if job.kind == "keyframe" else {"clip_ids": ids, "clip_approved": False}))
         elif job.kind == "export":
+            selected_music = [source for source in project.get('sources', [])
+                if source.get('kind') == 'audio' and source.get('selected')]
+            if len(selected_music) > 1:
+                raise ValueError('Chỉ chọn một tệp nhạc nền trong thư viện trước khi xuất phim.')
+            music = (self.service.artifact_path(selected_music[0]['artifact_id'])
+                if selected_music else None)
             scenes = [{"audio": str(self.service.artifact_path(s["speech_id"])),
-                       "clips": [str(self.service.artifact_path(id)) for id in s["clip_ids"]],
+                       "clips": [str(self.service.artifact_path(id)) for id in
+                           (s.get('rife_clip_ids') if project.get('frame_interpolation') == 'rife24' else s['clip_ids'])],
                        "narration": s["narration"], "chapter_id": s.get("chapter", "")} for s in project["scenes"]]
             for scene_input, saved_scene in zip(scenes, project['scenes']):
                 audio_artifact = self.service.read(self.service.require(Artifact, saved_scene['speech_id']))
                 if audio_artifact.get('timestamps') is not None:
                     scene_input['timestamps'] = audio_artifact['timestamps']
             directory = self.service.job_directory(job.id)
-            outputs = await asyncio.to_thread(render_film, scenes, directory, quality=project['quality'], project_settings=project)
+            outputs = await asyncio.to_thread(render_film, scenes, directory, music,
+                quality=project['quality'], project_settings=project)
             config = directory / "project.json"
             config.write_text(json.dumps(job.snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
             script = directory / "script-with-sources.txt"

@@ -4,7 +4,7 @@ from copy import deepcopy
 from sqlalchemy import select
 
 from studio.generation import clip_config, shot_config
-from studio.media import probe, shot_count
+from studio.media import probe, scene_clip_count
 from studio.metrics import estimate
 from studio.models import Artifact, Job, ProductionRun
 from studio.production import dependency_identity
@@ -52,10 +52,11 @@ def performance(jobs, project_id, run_id=None):
             duration = probe(service.artifact_path(audio))['duration'] if audio else None
             if duration:
                 measured += duration
-            count = shot_count(duration) if duration else None
+            count = scene_clip_count(effective_scene, duration) if duration else None
             default_override = run.checkpoint.get('pending_clip_config') if run and not job else None
             default = clip_config(project, effective_scene, default_override)
-            submissions = job.result.get('submissions', {}) if job else {}
+            submissions = ({**job.result.get('submissions', {}), **job.result.get('local_shots', {})}
+                           if job else {})
             host_id = job.host_id if job else project.get('host_id')
             runtime = latest_runtime.get(host_id, {})
             # After an explicit runtime change, wait for a sample from that runtime.
@@ -70,7 +71,13 @@ def performance(jobs, project_id, run_id=None):
             shots = []
             for index in range(count or 0):
                 stage = f'clip-{index}'
-                config = shot_config(job, stage) if job else default
+                config = shot_config(job, stage, duration) if job else clip_config(
+                    project, effective_scene, default_override, index=index, duration=duration)
+                if effective_scene.get('motion', 'wan') != 'wan':
+                    import math
+                    frames = math.ceil(duration * 24)
+                    config = {**config, 'frames': frames, 'fps': 24, 'steps': 0,
+                              'shot_seconds': frames / 24, 'motion': effective_scene['motion']}
                 if config not in configurations:
                     configurations.append(config)
                 artifact = artifacts.get(stage + '.mp4')

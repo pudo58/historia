@@ -13,7 +13,7 @@ from studio.packs import load_graph
 from studio.schemas import SceneInput
 from studio.service import canonical_hash
 
-LIVE = {'running', 'pause_requested', 'paused', 'duration_review', 'reconciling', 'failed'}
+LIVE = {'running', 'pause_requested', 'paused', 'duration_review', 'keyframe_review', 'reconciling', 'failed'}
 
 
 def dependency_identity(project, scene, kind):
@@ -24,6 +24,8 @@ def dependency_identity(project, scene, kind):
     if kind == 'speech':
         return {'narration': scene['narration'], 'voice': project['voice'],
                 'pronunciation': project.get('pronunciation', '')}
+    if kind == 'rife':
+        return {'profile': project.get('frame_interpolation'), 'clip_ids': scene.get('clip_ids')}
     if kind in {'keyframe', 'clip'}:
         character_ids = scene.get('character_ids', [])
         characters = [c for c in project['characters'] if c['id'] in character_ids]
@@ -35,8 +37,13 @@ def dependency_identity(project, scene, kind):
                  'render_size': resolve_format(project.get('quality', 'draft'), project)['render_size'],
                  'render_profile': project.get('render_profile') or ('standard' if project.get('quality') == 'final' else 'draft'),
                  'characters': characters, 'references': [s for s in project['sources'] if s['id'] in refs]}
+        if kind == 'keyframe' and project.get('keyframe_profile', 'standard') != 'standard':
+            value['keyframe_profile'] = project['keyframe_profile']
         if kind == 'clip':
             value.update(keyframe_id=scene.get('keyframe_id'), speech_id=scene.get('speech_id'), duration=scene.get('duration'))
+            value['scene'].update({k: scene[k] for k in ('motion', 'image_strategy', 'shorten_last_shot') if k in scene})
+        if kind == 'keyframe' and scene.get('image_strategy') == 'per_shot':
+            value['scene']['image_strategy'] = 'per_shot'
         return value
     return {'project': project}
 
@@ -66,7 +73,8 @@ class ProductionRuns:
         value['current_scene_id'] = current.scene_id if current else None
         value['queue_status'] = current.status if current else None
         value['progress'] = 100 if run.status == 'completed' else min(99, round(
-            len(run.checkpoint.get('jobs', {})) * 100 / (3 * value['scene_count'] + 1)))
+            len(run.checkpoint.get('jobs', {})) * 100 /
+            ((4 if run.snapshot.get('frame_interpolation') == 'rife24' else 3) * value['scene_count'] + 1)))
         value['billing_notice'] = 'Tạm dừng sản xuất không dừng tiền thuê GPU.'
         return value
 
@@ -109,11 +117,21 @@ class ProductionRuns:
                 raise ValueError('Chọn GPU và xác nhận fingerprint SSH trước.')
             self.jobs.assert_no_abandoned_remote(host_id)
             self.jobs.recipes.assert_recipes_idle(host_id)
-            needed = ['tts', 'qwen_image', 'wan_i2v']
+            needed = ['tts', 'qwen_image']
+            if any(s.get('motion', 'wan') == 'wan' for s in project['scenes']):
+                needed.append('wan_i2v')
             if any(s.get('reference_ids') or s.get('character_ids') for s in project['scenes']):
                 needed.append('qwen_edit')
             if not self.jobs.installations.component_proven(host_id, needed):
                 raise ValueError('Model cần dùng chưa sẵn sàng/kiểm chứng trên GPU đã chọn.')
+            if (project.get('keyframe_profile') == 'lightning' and any(
+                    not s.get('reference_ids') and not s.get('character_ids') for s in project['scenes']) and
+                    not self.jobs.optional_ready(host_id, 'qwen-image-lightning-fp8')):
+                raise ValueError('Cài LoRA Qwen-Image Lightning tùy chọn trước khi chạy cảnh tạo ảnh từ chữ.')
+            if (project.get('frame_interpolation') == 'rife24' and
+                    any(s.get('motion', 'wan') == 'wan' for s in project['scenes']) and
+                    not self.jobs.optional_ready(host_id, 'rife-v4.26')):
+                raise ValueError('Cài model RIFE 4.26 tùy chọn trước khi bắt đầu lượt final.')
             for scene in project['scenes']:
                 self.service.validate_scene(project_id, SceneInput.model_validate({k: scene[k] for k in SceneInput.model_fields if k in scene}))
                 if not scene['narration'].strip() or not scene['visual_prompt'].strip():
@@ -153,13 +171,15 @@ class ProductionRuns:
                 raise ValueError('Lượt đã bỏ không thể tiếp tục; chọn GPU và xác nhận lượt mới riêng.')
             if run.status in {'completed', 'superseded'}:
                 return self.view(run)
+            if run.status == 'keyframe_review':
+                raise ValueError('Duyệt toàn bộ ảnh riêng trước khi đổi trạng thái lượt sản xuất.')
             checkpoint = deepcopy(run.checkpoint)
             job = session.get(Job, checkpoint.get('current_job_id')) if checkpoint.get('current_job_id') else None
             if action == 'pause':
                 run.status = 'pause_requested' if job and job.status == 'running' else 'paused'
                 if job and job.status == 'queued':
                     job.status = 'paused'
-                if job and job.kind == 'clip' and job.status == 'running':
+                if job and job.kind in {'clip', 'rife'} and job.status == 'running':
                     job.result = {**job.result, 'pause_requested': True}
             elif action == 'accept-duration':
                 if run.status != 'duration_review':
@@ -167,6 +187,8 @@ class ProductionRuns:
                 checkpoint['duration_accepted'] = True
                 run.status = 'running'
             elif action == 'resume':
+                if run.status == 'keyframe_review':
+                    raise ValueError('Duyệt toàn bộ ảnh riêng trước khi tiếp tục Wan.')
                 if run.status == 'duration_review':
                     raise ValueError('Chấp nhận thời lượng đo hoặc sửa lời đọc trước.')
                 # Pod migration: rebind live project GPU onto frozen snapshot/job so
@@ -176,14 +198,15 @@ class ProductionRuns:
                     snap = deepcopy(run.snapshot)
                     snap['host_id'] = live_host
                     run.snapshot = snap
-                    if job:
+                    if job and job.host_id:
                         job_snap = deepcopy(job.snapshot)
                         project_snap = dict(job_snap.get('project') or {})
                         project_snap['host_id'] = live_host
                         job_snap['project'] = project_snap
                         job.snapshot = job_snap
                         job.host_id = live_host
-                elif job and live_host and not job.host_id:
+                elif job and live_host and not job.host_id and job.kind not in {'export'} and not (
+                        job.kind in {'clip', 'rife'} and job.snapshot.get('scene', {}).get('motion', 'wan') != 'wan'):
                     job.host_id = live_host
                 if job and job.status in {'paused', 'interrupted', 'reconciling', 'failed', 'cancelled'}:
                     if job.status == 'failed':
@@ -203,6 +226,30 @@ class ProductionRuns:
             session.commit()
         return self.get(id)
 
+    def approve_keyframes(self, id, scene_id):
+        with self.service.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            run = session.get(ProductionRun, id)
+            if not run:
+                raise KeyError(id)
+            if run.status != 'keyframe_review' or run.checkpoint.get('review_scene_id') != scene_id:
+                raise ValueError('Lượt sản xuất không chờ duyệt ảnh của cảnh này.')
+            cp = deepcopy(run.checkpoint)
+            scene = next((s for s in run.snapshot['scenes'] if s['id'] == scene_id), None)
+            media = cp.get('media', {}).get(scene_id, {})
+            selected = media.get('shot_keyframes') or []
+            from studio.media import scene_clip_count
+            duration = probe(self.service.artifact_path(media['speech_id']))['duration'] if media.get('speech_id') else 0
+            if (not scene or len(selected) != scene_clip_count(scene, duration) or
+                    not all(self.jobs.artifact_valid(a) for a in selected)):
+                raise ValueError('Thiếu ảnh riêng hợp lệ; không chạy Wan.')
+            cp['media'][scene_id] = {**media, 'keyframe_approved': True,
+                                     'shot_keyframes_approved': True}
+            cp.pop('review_scene_id', None)
+            run.checkpoint, run.status = cp, 'running'
+            session.commit()
+        return self.get(id)
+
     def tick(self):
         with self.service.sessions() as session:
             ids = list(session.scalars(select(ProductionRun.id).where(ProductionRun.status.in_(['running', 'pause_requested']))))
@@ -219,7 +266,9 @@ class ProductionRuns:
                     session.commit()
 
     def valid_output(self, kind, output):
-        ids = output.get('clip_ids', []) if kind == 'clip' else output.get('artifact_ids', []) if kind == 'export' else [output.get('speech_id' if kind == 'speech' else 'keyframe_id')]
+        ids = output.get('clip_ids', []) if kind == 'clip' else output.get('rife_clip_ids', []) if kind == 'rife' else output.get('artifact_ids', []) if kind == 'export' else [output.get('speech_id' if kind == 'speech' else 'keyframe_id')]
+        if kind == 'keyframe' and output.get('shot_keyframes'):
+            ids = [*ids, *output['shot_keyframes']]
         return bool(ids) and all(self.jobs.artifact_valid(id) for id in ids)
 
     def advance(self, id):
@@ -242,6 +291,10 @@ class ProductionRuns:
                     raise ValueError('Checkpoint thiếu file hoặc checksum không hợp lệ; không tự chạy lại GPU.')
                 if current.kind != 'export':
                     cp['media'][current.scene_id] = {**cp['media'].get(current.scene_id, {}), **output}
+                    if (current.kind == 'keyframe' and current.snapshot['scene'].get('image_strategy') == 'per_shot'
+                            and not cp['media'][current.scene_id].get('shot_keyframes_approved')):
+                        cp['review_scene_id'] = current.scene_id
+                        run.status = 'keyframe_review'
                 else:
                     cp['artifact_ids'] = output['artifact_ids']
                     run.status, run.stage = 'completed', 'completed'
@@ -255,7 +308,8 @@ class ProductionRuns:
             project = deepcopy(run.snapshot)
             for scene in project['scenes']:
                 scene.update(cp['media'].get(scene['id'], {}))
-            for kind in ('speech', 'keyframe', 'clip', 'export'):
+            stages = ('speech', 'keyframe', 'clip', 'rife', 'export') if project.get('frame_interpolation') == 'rife24' else ('speech', 'keyframe', 'clip', 'export')
+            for kind in stages:
                 run.stage = kind
                 if kind == 'keyframe':
                     duration = sum(probe(self.service.artifact_path(s['speech_id']))['duration'] for s in project['scenes'])
@@ -277,20 +331,22 @@ class ProductionRuns:
                     if kind == 'export':
                         for s in project['scenes']:
                             duration = probe(self.service.artifact_path(s['speech_id']))['duration']
-                            available = sum(probe(self.service.artifact_path(a))['duration'] for a in s.get('clip_ids', []))
+                            source_ids = s.get('rife_clip_ids', []) if project.get('frame_interpolation') == 'rife24' else s.get('clip_ids', [])
+                            available = sum(probe(self.service.artifact_path(a))['duration'] for a in source_ids)
                             if duration <= 0 or available + .05 < duration:
                                 raise ValueError('Clip chưa đủ thời lượng lời đọc; không kéo chậm/lặp clip.')
-                    workflows = {name: canonical_hash(load_graph(name)) for name in ('qwen_image', 'qwen_edit', 'wan_i2v')}
-                    workflow = {} if kind in {'speech', 'export'} else ({'wan_i2v': workflows['wan_i2v']} if kind == 'clip' else {k: v for k, v in workflows.items() if k != 'wan_i2v'})
+                    workflows = {name: canonical_hash(load_graph(name)) for name in ('qwen_image', 'qwen_edit', 'wan_i2v', 'rife_post')}
+                    workflow = {} if kind in {'speech', 'export'} or (kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan') else ({'wan_i2v': workflows['wan_i2v']} if kind == 'clip' else {'rife_post': workflows['rife_post']} if kind == 'rife' else {k: v for k, v in workflows.items() if k in {'qwen_image', 'qwen_edit'}})
+                    clip_host = None if kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan' else project.get('host_id')
                     hashed = canonical_hash({'production_version': 1, 'kind': kind, 'project_id': run.project_id,
-                        'scene_id': scene['id'] if scene else None, 'host': project.get('host_id') if kind != 'export' else None,
+                        'scene_id': scene['id'] if scene else None, 'host': clip_host if kind != 'export' else None,
                         'inputs': dependency_identity(project, scene, kind), 'workflow': workflow})
                     existing = session.scalar(select(Job).where(Job.input_hash == hashed, Job.status == 'completed').order_by(Job.created_at.desc()))
                     from studio.generation import clip_output_matches
                     if existing and kind == 'clip' and not clip_output_matches(existing, project, scene):
                         existing = None
                     output = (existing.result if kind == 'export' else existing.result.get('production_output', {})) if existing else {}
-                    if not existing and scene and kind != 'export':
+                    if not existing and scene and kind not in {'export', 'rife'}:
                         # Reuse legacy media only with a completed job snapshot proving
                         # the exact dependency identity, never merely an existing file.
                         from studio.models import Artifact
@@ -313,9 +369,9 @@ class ProductionRuns:
                             from studio.tts_device import snapshot_tts_device
                             snap_project['tts_device'] = snapshot_tts_device(project)
                         job = Job(project_id=run.project_id, scene_id=scene['id'] if scene else None,
-                            host_id=project.get('host_id') if kind != 'export' else None, kind=kind, input_hash=hashed,
+                            host_id=clip_host if kind != 'export' else None, kind=kind, input_hash=hashed,
                             snapshot={'project': snap_project, 'scene': deepcopy(scene), 'production_run_id': run.id,
-                                      'generation_version': 2,
+                                      'generation_version': 3,
                                       'draft_export_authorized': True, 'request': {'kind': kind}, 'workflow_hashes': workflows})
                         session.add(job)
                         session.flush()

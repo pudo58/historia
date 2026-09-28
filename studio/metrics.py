@@ -37,16 +37,19 @@ def estimate(submissions, configs, hourly_usd=None):
         if seconds is not None and not item.get('cold_candidate') and item.get('config') and item.get('attempts', 1) == 1:
             key = canonical_hash({'config': item['config'], 'runtime': item.get('runtime', {})})
             groups.setdefault(key, []).append(seconds)
-    remaining, eta = len(configs), 0.0
+    remaining, eta, gpu_eta = len(configs), 0.0, 0.0
     for config, runtime in configs:
         samples = groups.get(canonical_hash({'config': config, 'runtime': runtime}))
         if not samples:
             eta = None
             break
-        eta += median(samples)
+        seconds = median(samples)
+        eta += seconds
+        if config.get('motion') not in {'static', 'kenburns'}:
+            gpu_eta += seconds
     return {'completed_shots': completed, 'remaining_shots': remaining,
             'median_shot_seconds': median([v for values in groups.values() for v in values]) if groups else None,
             'median_comfy_seconds': median(execution) if execution else None,
-            'eta_seconds': eta, 'estimated_remaining_usd': eta / 3600 * hourly_usd
+            'eta_seconds': eta, 'estimated_remaining_usd': gpu_eta / 3600 * hourly_usd
             if eta is not None and hourly_usd is not None else None,
             'billing_basis': 'processing_estimate_not_pod_rental'}

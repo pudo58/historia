@@ -12,9 +12,11 @@ from studio.packs import pack_info
 from studio.schemas import (
     Approval,
     BenchmarkInput,
+    ChainFrameApproval,
     CharacterInput,
     InstallConsent,
     JobInput,
+    KeyframeBatchApproval,
     OutlineApproval,
     PendingClipConfig,
     ProductionInput,
@@ -23,6 +25,7 @@ from studio.schemas import (
     RuntimeConfig,
     SceneInput,
     SceneUpdate,
+    ScriptProviderInput,
     SourceUpdate,
     TextSourceInput,
 )
@@ -41,11 +44,80 @@ def router(service, jobs, host_lock):
                 "message": "Cài bộ AI qua Full SSH trong Bộ AI & kiểm chứng. Chỉ mở tác vụ AI sau khi output kiểm chứng pass.",
                 "billing_notice": "Dừng render hoặc đóng web KHÔNG dừng tính tiền GPU thuê."}
 
+    @api.get('/script-provider')
+    def script_provider():
+        import json
+        saved = json.loads(jobs.hosts.setting('studio_script_provider') or '{}')
+        return {'configured': bool(saved), 'url': saved.get('url', ''),
+                'model': saved.get('model', ''), 'has_key': bool(saved.get('api_key'))}
+
+    @api.put('/script-provider')
+    def save_script_provider(payload: ScriptProviderInput):
+        import json
+        if payload.url:
+            jobs.hosts.save_setting('studio_script_provider', json.dumps(payload.model_dump()))
+        else:
+            jobs.hosts.save_setting('studio_script_provider', '')
+        return script_provider()
+
     from ghm.schemas import HostOptions
 
     @api.get('/hosts/{id}/installation')
     def installation(id: str):
         return jobs.installations.state(id)
+
+    @api.get('/hosts/{id}/optional-models')
+    def optional_models(id: str):
+        from studio.packs import OPTIONAL_MODEL_FILES
+        return {name: jobs.optional_ready(id, name) for name in OPTIONAL_MODEL_FILES}
+
+    @api.get('/projects/{id}/pod-idle')
+    async def pod_idle(id: str):
+        from datetime import UTC, datetime
+
+        from studio.models import ProductionRun
+        project = service.project(id)
+        host_id = project.get('host_id')
+        if not host_id:
+            return {'state': 'unknown', 'reason': 'Chưa chọn Pod.'}
+        with service.sessions() as session:
+            rows = list(session.scalars(select(Job).where(Job.host_id == host_id)))
+            runs = [run for run in session.scalars(select(ProductionRun))
+                    if run.snapshot.get('host_id') == host_id]
+        def unresolved(result):
+            return bool(result.get('maintenance_pending') or result.get('speech_pending') or
+                result.get('outline_pending') or result.get('chapter_pending') is not None or
+                any(v.get('state') != 'downloaded' or not v.get('artifact_id')
+                    for v in result.get('submissions', {}).values()))
+        active = any(j.status in {'queued', 'running', 'cancelling', 'reconciling'} or
+                     (j.status in {'paused', 'failed', 'interrupted', 'abandoned'} and unresolved(j.result))
+                     or (j.kind in {'install', 'optional_model', 'verify'} and j.status in {'interrupted', 'abandoned'})
+                     for j in rows)
+        active |= any(r.status in {'running', 'pause_requested', 'reconciling'} for r in runs)
+        if active:
+            return {'state': 'busy', 'reason': 'Historia còn job hoặc prompt cần đối chiếu.'}
+        try:
+            async with jobs.backend.connection(host_id) as (_, client):
+                response = await client.get('/queue', timeout=15)
+                response.raise_for_status()
+                queue = response.json()
+        except Exception:  # noqa: BLE001 -- read-only health check, never infer idleness
+            return {'state': 'unknown', 'reason': 'Không đọc được queue ComfyUI; trạng thái Pod chưa xác minh.'}
+        if queue.get('queue_running') or queue.get('queue_pending'):
+            return {'state': 'busy', 'reason': 'Queue ComfyUI chưa rỗng.'}
+        timestamps = [datetime.fromisoformat(value) for value in
+                      [*(j.updated_at for j in rows), *(r.updated_at for r in runs)] if value]
+        if not timestamps:
+            return {'state': 'unknown', 'reason': 'Chưa có mốc hoạt động để xác nhận 10 phút nhàn rỗi.'}
+        seconds = max(0, (datetime.now(UTC) - max(timestamps)).total_seconds())
+        hourly = project.get('hourly_usd')
+        return {'state': 'idle' if seconds >= 600 else 'recent', 'idle_seconds': seconds,
+                'hourly_usd': hourly, 'next_ten_minutes_usd': hourly / 6 if hourly is not None else None,
+                'reason': 'ComfyUI rỗng và Historia không còn job/prompt cần đối chiếu.'}
+
+    @api.post('/hosts/{id}/optional-models/{name}')
+    def install_optional_model(id: str, name: str):
+        return jobs.install_optional(id, name)
 
     @api.get('/hosts/{id}/runtime')
     def runtime_state(id: str):
@@ -242,13 +314,17 @@ def router(service, jobs, host_lock):
     def accept_production_duration(id: str):
         return jobs.runs.action(id, 'accept-duration')
 
+    @api.post('/production-runs/{id}/approve-keyframes')
+    def approve_run_keyframes(id: str, payload: KeyframeBatchApproval):
+        return jobs.runs.approve_keyframes(id, payload.scene_id)
+
     @api.post('/production-runs/{id}/pending-clip-config')
     def configure_run_clips(id: str, payload: PendingClipConfig):
-        return jobs.configure_pending(payload.model_dump(), run_id=id)
+        return jobs.configure_pending(payload.model_dump(exclude_unset=True), run_id=id)
 
     @api.post('/jobs/{id}/pending-clip-config')
     def configure_job_clips(id: str, payload: PendingClipConfig):
-        return jobs.configure_pending(payload.model_dump(), job_id=id)
+        return jobs.configure_pending(payload.model_dump(exclude_unset=True), job_id=id)
 
     @api.get("/jobs")
     def list_jobs(project_id: str | None = None):
@@ -281,6 +357,10 @@ def router(service, jobs, host_lock):
     @api.post("/jobs/{id}/resume")
     async def resume(id: str):
         return jobs.resume(id)
+
+    @api.post('/jobs/{id}/approve-chain-frame')
+    def approve_chain_frame(id: str, payload: ChainFrameApproval):
+        return jobs.approve_chain_frame(id, payload.index, payload.artifact_id)
 
     @api.get("/projects/{id}/artifacts")
     def artifacts(id: str):

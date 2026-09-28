@@ -187,6 +187,7 @@ print(json.dumps(data))
         from studio.metrics import execution_seconds
         from studio.service import canonical_hash
         target_dir = self.service.job_directory(job.id)
+        is_video = name in {'wan_i2v', 'rife_post'}
         prior = job.result.get("submissions", {}).get(stage)
         prompt_id = (prior or {}).get('prompt_id') or str(uuid5(UUID(job.id), stage))
         async with self.generation_connection(job) as (client, cache):
@@ -194,7 +195,10 @@ print(json.dumps(data))
             if prior:
                 checkpoint(stage, {'attempts': prior.get('attempts', 1) + 1})
             timing = dict((prior or {}).get('timing', {}))
-            config = shot_config(job, stage) if name == 'wan_i2v' else None
+            duration = None
+            if name == 'wan_i2v' and job.snapshot.get('generation_version', 2) >= 3:
+                duration = probe(self.service.artifact_path(job.snapshot['scene']['speech_id']))['duration']
+            config = shot_config(job, stage, duration) if name == 'wan_i2v' else None
             history = await client.get(f"/history/{prompt_id}")
             history.raise_for_status()
             item = history.json().get(prompt_id)
@@ -203,7 +207,7 @@ print(json.dumps(data))
             queued = any(len(row) > 1 and row[1] == prompt_id for key in ["queue_running", "queue_pending"] for row in queue.json().get(key, []))
             if not item and not queued and prior and prior.get('state') in {'remote_completed', 'downloaded'} and prior.get('output'):
                 item = {'status': {'status_str': 'success', 'completed': True},
-                        'outputs': {'recovered': {'videos' if name == 'wan_i2v' else 'images': [prior['output']]}}}
+                        'outputs': {'recovered': {'videos' if is_video else 'images': [prior['output']]}}}
             if not item and not queued and prior:
                 raise ReconcileRequired("Không tìm thấy prompt đã gửi trong queue/history. Không tự gửi lại để tránh render trùng; kiểm tra máy GPU rồi tạo lượt mới.")
             if not item and not queued:
@@ -225,11 +229,11 @@ print(json.dumps(data))
                 for index, path in enumerate(images):
                     from studio.formats import resolve_format
                     fmt = resolve_format(quality, job.snapshot.get("project", {}))
-                    upload_key = (digest(path), tuple(fmt['render_size']), fmt['legacy'])
+                    upload_key = (digest(path), tuple(fmt['render_size']), fmt['legacy']) if name != 'rife_post' else (digest(path), 'video')
                     if upload_key in cache['uploads']:
                         names.append(cache['uploads'][upload_key])
                         continue
-                    if not fmt["legacy"]:
+                    if not fmt["legacy"] and name != 'rife_post':
                         from PIL import Image, ImageOps
                         fitted = target_dir / f"reference-fit-{index}.png"
                         with Image.open(path) as original:
@@ -248,8 +252,10 @@ print(json.dumps(data))
                     names.append(f"{subfolder}/{name_on_host}" if subfolder else name_on_host)
                     cache['uploads'][upload_key] = names[-1]
                 graph = graph_for(name, prompt, seed, quality, names, f"studio/{job.id}/{stage}", config['steps'] if config else steps, shot,
-                                  project_settings=job.snapshot.get("project", {}))
-                if 'schema' not in cache:
+                                  project_settings=job.snapshot.get("project", {}),
+                                  frames=config['frames'] if config else 81,
+                                  generation_version=job.snapshot.get('generation_version', 2))
+                if 'schema' not in cache or name == 'rife_post':
                     schema_response = await client.get("/object_info")
                     schema_response.raise_for_status()
                     cache['schema'] = schema_response.json()
@@ -293,7 +299,7 @@ print(json.dumps(data))
             for output in item.get("outputs", {}).values():
                 for key in ["images", "gifs", "videos"]:
                     outputs.extend(output.get(key, []))
-            suffixes = {".mp4", ".webm"} if name == "wan_i2v" else {".png", ".jpg", ".webp"}
+            suffixes = {".mp4", ".webm"} if is_video else {".png", ".jpg", ".webp"}
             output = next((o for o in outputs if Path(o.get("filename", "")).suffix.lower() in suffixes), None)
             if not output:
                 raise ValueError("Workflow không tạo output đúng loại; không đánh dấu thành công.")
@@ -323,9 +329,17 @@ print(json.dumps(data))
                 raise ValueError("Output tải về rỗng.")
             part.replace(target)
             validation_started = time.monotonic()
-            if name == "wan_i2v":
-                if probe(target)["duration"] <= 0:
+            if is_video:
+                video_info = probe(target)
+                if video_info["duration"] <= 0 or ('width' in video_info and not video_info['width']):
                     raise ValueError("Output không phải video đọc được.")
+                if config and name == 'wan_i2v' and ('video_duration' in video_info or 'frames' in video_info):
+                    video_seconds = video_info.get('video_duration') or video_info['duration']
+                    if video_seconds + 1 / config['fps'] + .02 < config['shot_seconds']:
+                        raise ValueError('Clip Wan thiếu frame so với cấu hình shot; giữ prompt ID để kiểm tra output.')
+                    measured_fps = video_info.get('fps')
+                    if measured_fps and abs(measured_fps - config['fps']) > .5:
+                        raise ValueError('FPS clip Wan không khớp cấu hình shot; không lưu artifact sai.')
             else:
                 from PIL import Image
                 with Image.open(target) as image:
@@ -357,6 +371,11 @@ print(json.dumps(data))
             raise ReconcileRequired("Chưa xác nhận prompt đã dừng; giữ GPU ở trạng thái cần đối chiếu.")
 
     async def language(self, job, prompt: str, images: list[Path], log) -> dict:
+        provider = job.snapshot.get('script_provider')
+        if provider and provider.get('kind') == 'api':
+            from studio.script_provider import generate
+            log('Đang gửi yêu cầu tới API kịch bản đã cấu hình.')
+            return await generate(self.hosts, provider, prompt)
         return await self._worker(job, "language", {"prompt": prompt}, images, log)
 
     async def recover_speech(self, job) -> Path | None:

@@ -30,7 +30,7 @@ from studio.models import Artifact, Job, ProductionRun, Scene
 from studio.packs import graph_for
 from studio.production import dependency_identity
 from studio.runtime import runtime_flags
-from studio.schemas import ProjectInput, SceneInput
+from studio.schemas import JobInput, ProjectInput, SceneInput, SceneUpdate
 
 
 @pytest.fixture
@@ -76,6 +76,60 @@ def test_steps_are_separate_and_legacy_identity_is_unchanged():
         assert (g['98']['inputs']['width'], g['98']['inputs']['height']) == (c['width'], c['height'])
 
 
+def test_new_profiles_keep_wan_default_and_shorten_only_last_shot():
+    project = {'quality': 'final', 'keyframe_profile': 'lightning'}
+    scene = {'seed': 42, 'shorten_last_shot': True, 'clip_steps': 4}
+    duration = 11.1
+    first = clip_config(project, scene, index=0, duration=duration)
+    last = clip_config(project, scene, index=2, duration=duration)
+    assert first['frames'] == 81 and first['fps'] == 16
+    assert last['frames'] == 33 and last['fps'] == 16
+    assert last['frames'] % 4 == 1
+    assert last['shot_seconds'] >= duration - 2 * 81/16
+    graph = graph_for('wan_i2v', 'a scene', 42, 'final', ['keyframe.png'], 'clip',
+                      4, project_settings=project, frames=last['frames'], generation_version=3)
+    assert graph['98']['inputs']['length'] == 33
+    assert graph['94']['inputs']['fps'] == 16
+    assert graph['86']['inputs']['end_at_step'] == graph['85']['inputs']['start_at_step'] == 2
+    assert stage_steps({}, 'keyframe', 'qwen_image', project, 3) == 4
+    image = graph_for('qwen_image', 'historical scene', 42, 'final', [], 'image',
+                      project_settings=project, generation_version=3)
+    assert image['3']['inputs']['steps'] == 4
+    assert image['67']['inputs']['lora_name'].startswith('Qwen-Image-fp8')
+    assert graph_for('qwen_image', 'old', 42, 'final', [], 'image')['3']['inputs']['steps'] == 20
+
+
+def test_pending_shot_shortening_respects_saved_intent(local, monkeypatch):
+    _, service, jobs, job, _ = local
+    monkeypatch.setattr('studio.jobs.probe', lambda path: {'duration': 11.1})
+    with service.sessions() as session:
+        row = session.get(Job, job.id)
+        row.snapshot = {**row.snapshot, 'generation_version': 3}
+        session.commit()
+    current = service.require(Job, job.id)
+    jobs.set_pending_clip_config(current, {'clip_steps': 4, 'shorten_last_shot': True})
+    assert shot_config(current, 'clip-0', 11.1)['frames'] == 81
+    assert shot_config(current, 'clip-2', 11.1)['frames'] == 33
+    # A previously submitted shot keeps its checkpointed graph configuration.
+    frozen = clip_config(current.snapshot['project'], current.snapshot['scene'],
+                         index=2, duration=11.1)
+    current.result['submissions'] = {'clip-2': {'state': 'submitted', 'config': frozen}}
+    assert shot_config(current, 'clip-2', 11.1) == frozen
+
+
+def test_rife_template_is_separate_from_wan():
+    from studio.packs import load_graph
+    graph = graph_for('rife_post', '', 0, 'final', ['original.mp4'], 'rife-0')
+    assert graph['1']['inputs']['file'] == 'original.mp4'
+    assert graph['3']['inputs']['model_name'] == 'rife_v4.26.safetensors'
+    assert graph['4']['inputs']['multiplier'] == 3
+    assert graph['5']['inputs']['fps'] == 48
+    assert load_graph('wan_i2v')['98']['inputs']['length'] == 81
+    assert estimate([{'state': 'downloaded', 'config': {'motion':'static'},
+                      'timing': {'total_seconds': 1}}],
+                    [({'motion':'static'}, {})], 2)['estimated_remaining_usd'] == 0
+
+
 def test_stage_specific_production_dependencies():
     project = {'voice': 'v', 'characters': [], 'sources': [], 'quality': 'final'}
     scene = {'narration': 'n', 'steps': None}
@@ -83,6 +137,62 @@ def test_stage_specific_production_dependencies():
     for kind in ('speech', 'keyframe'):
         assert dependency_identity(project, scene, kind) == dependency_identity(project, changed, kind)
     assert dependency_identity(project, scene, 'clip') != dependency_identity(project, changed, 'clip')
+
+
+def test_legacy_project_save_preserves_media_and_audio(local):
+    _, service, _, job, _ = local
+    with service.sessions() as session:
+        session.get(Job, job.id).status = 'completed'
+        session.commit()
+    before = service.project(job.project_id)['scenes'][0]
+    service.update_project(job.project_id, ProjectInput(title='Film', topic='Test', hourly_usd=2))
+    after = service.project(job.project_id)['scenes'][0]
+    assert after['keyframe_id'] == before['keyframe_id']
+    assert after['speech_id'] == before['speech_id']
+    assert after['revision'] == before['revision']
+
+
+def test_switching_image_strategy_keeps_audio_and_clears_old_image_review(local):
+    _, service, _, job, _ = local
+    with service.sessions() as session:
+        session.get(Job, job.id).status = 'completed'
+        row = session.get(Scene, job.scene_id)
+        row.data = {**row.data, 'image_strategy': 'shared',
+                    'shot_keyframes': [row.data['keyframe_id']],
+                    'shot_keyframes_approved': True, 'clip_ids': ['old']}
+        session.commit()
+    old = service.read(service.require(Scene, job.scene_id))
+    value = {key: old[key] for key in SceneInput.model_fields if key in old}
+    value['image_strategy'] = 'per_shot'
+    edited = service.update_scene(job.scene_id, SceneUpdate(**value, revision=old['revision']))
+    assert edited['speech_id'] == old['speech_id']
+    assert edited['keyframe_id'] == old['keyframe_id']
+    assert not edited.get('shot_keyframes_approved')
+    assert not edited.get('shot_keyframes')
+    assert not edited.get('clip_ids')
+
+
+@pytest.mark.asyncio
+async def test_static_clip_job_finishes_without_gpu_and_keeps_audio(local):
+    from studio.media import probe, run_ffmpeg
+
+    _, service, jobs, old_job, _ = local
+    audio = service.root / 'speech.wav'
+    run_ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.2', str(audio)])
+    saved_audio = service.artifact(audio, old_job.project_id, 'speech.wav')
+    with service.sessions() as session:
+        session.get(Job, old_job.id).status = 'completed'
+        row = session.get(Scene, old_job.scene_id)
+        row.data = {**row.data, 'speech_id': saved_audio['id'], 'motion': 'static'}
+        session.commit()
+    submitted = jobs.submit(old_job.project_id, JobInput(kind='clip', scene_id=old_job.scene_id))
+    assert submitted['host_id'] is None
+    await jobs.execute(service.require(Job, submitted['id']))
+    current = service.read(service.require(Scene, old_job.scene_id))
+    assert current['speech_id'] == saved_audio['id']
+    assert len(current['clip_ids']) == 1
+    info = probe(service.artifact_path(current['clip_ids'][0]))
+    assert info['duration'] >= 1.2 and info['fps'] == 24
 
 
 def test_pending_override_preserves_snapshot_artifact_and_submissions(local, monkeypatch):
@@ -265,6 +375,30 @@ async def test_post_disconnect_reconcile_never_reposts(local, monkeypatch):
     record = mock.service.require(Job, mock.job.id).result['submissions']['clip-0']
     assert record['state'] == 'downloaded' and record['attempts'] == 2
     assert record['timing']['comfy_execution_seconds'] == 60
+
+
+@pytest.mark.asyncio
+async def test_rife_post_keeps_prompt_id_and_does_not_repost(local, monkeypatch):
+    mock = ComfyMock(local, monkeypatch)
+    source = mock.service.job_directory(mock.job.id) / 'source.mp4'
+    source.write_bytes(b'saved clip fixture')
+    mock.schema = {'Test': {'input': {'required': {}}, 'output': ['VIDEO']}}
+    monkeypatch.setattr('studio.backend.graph_for', lambda *args, **kwargs:
+                        {'1': {'class_type': 'Test', 'inputs': {}}})
+    job = mock.service.require(Job, mock.job.id)
+    async def run():
+        return await mock.backend.generate(mock.service.require(Job, job.id), 'rife_post', '',
+            [source], 0, 'draft', lambda message: None,
+            lambda stage, value: mock.jobs.checkpoint(job.id, stage, value), 'rife-0')
+    mock.disconnect = True
+    with pytest.raises(ReconcileRequired):
+        await run()
+    mock.disconnect = False
+    await run()
+    assert mock.calls.count(('POST', '/prompt')) == 1
+    assert mock.calls.count(('POST', '/upload/image')) == 1
+    record = mock.service.require(Job, job.id).result['submissions']['rife-0']
+    assert record['state'] == 'downloaded' and record['graph_hash']
 
 
 @pytest.mark.asyncio

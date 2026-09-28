@@ -157,3 +157,5 @@
 .studio button:focus-visible, .studio summary:focus-visible, .studio a:focus-visible { outline: 3px solid #47856d; outline-offset: 3px; }
 @media(max-width:600px) { .studio .scene-edit-row { flex-direction:column; } .studio .final-film .job-results { grid-template-columns:1fr; } .studio .primary-steps button { padding:12px 5px; } }
 @media(prefers-reduced-motion: reduce) { .studio *, .studio *::before, .studio *::after { transition: none !important; animation: none !important; } }
+.review-images{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:16px 0}.review-images a{display:grid;gap:6px;color:inherit;text-decoration:none}.review-images img,.chain-review-image{width:100%;max-width:440px;aspect-ratio:16/9;object-fit:contain;background:#111;border:1px solid #454055;border-radius:8px}.review-images img{max-width:none}
+.review-output{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}

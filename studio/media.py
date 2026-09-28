@@ -1,11 +1,11 @@
 """Bounded local media operations. Paths come only from the artifact store."""
 import hashlib
-import math
 import json
+import math
 import re
-import textwrap
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,20 @@ def run_ffmpeg(arguments: list[str], timeout: int = 300) -> None:
         raise ValueError("FFmpeg không xử lý được media. Kiểm tra codec, dung lượng ổ và các tệp đầu vào.")
 
 
+def measure_loudness(path: Path) -> dict:
+    result = subprocess.run([ffmpeg(), '-nostdin', '-hide_banner', '-i', str(path),
+        '-vn', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json',
+        '-f', 'null', '-'], capture_output=True, timeout=600, check=False)
+    if result.returncode:
+        raise ValueError('Không đo được độ lớn tiếng của bản xuất.')
+    message = result.stderr.decode('utf-8', errors='replace')
+    match = re.search(r'\{\s*"input_i".*?\}', message, re.DOTALL)
+    if not match:
+        raise ValueError('FFmpeg không trả số đo LUFS/true peak.')
+    data = json.loads(match.group())
+    return {'integrated_lufs': float(data['input_i']), 'true_peak_dbfs': float(data['input_tp'])}
+
+
 def reference_frames(path: Path, output_dir: Path) -> list[Path]:
     info = probe(path)
     if not info["width"] or info["duration"] <= 0:
@@ -84,6 +98,63 @@ def shot_count(duration: float, seconds: float = 5.0625) -> int:
     if duration <= 0 or duration > 600:
         raise ValueError("Đoạn lời đọc phải dài hơn 0 và không quá 10 phút.")
     return max(1, math.ceil(duration / seconds))
+
+
+def scene_clip_count(scene: dict, duration: float) -> int:
+    """Local still-image modes cover the entire narration with one video artifact."""
+    return 1 if scene.get('motion', 'wan') in {'static', 'kenburns'} else shot_count(duration)
+
+
+def render_still_clip(image: Path, target: Path, duration: float, size: tuple[int, int],
+                      motion: str) -> None:
+    if motion not in {'static', 'kenburns'} or not 0 < duration <= 600:
+        raise ValueError('Cấu hình clip ảnh tĩnh không hợp lệ.')
+    width, height = size
+    frames = math.ceil(duration * 24)
+    if motion == 'static':
+        video_filter = f'scale={width}:{height}:flags=lanczos:force_original_aspect_ratio=decrease,' \
+            f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24'
+    else:
+        # Fit before zooming so no historical subject is cropped by aspect conversion.
+        video_filter = (f'scale={width}:{height}:flags=lanczos:force_original_aspect_ratio=decrease,'
+            f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,'
+            f"zoompan=z='min(zoom+0.0007,1.08)':x='iw/2-(iw/zoom/2)':"
+            f"y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps=24,setsar=1")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _cached_render(target, ['-loop', '1', '-i', str(image), '-an', '-vf', video_filter,
+                            '-frames:v', str(frames), '-c:v', 'libx264', '-crf', '18',
+                            '-pix_fmt', 'yuv420p'],
+                   {'image': digest(image), 'motion': motion, 'duration': duration,
+                    'size': size, 'version': 1}, duration)
+
+
+def extract_last_frame(clip: Path, target: Path) -> None:
+    import av
+    with av.open(str(clip)) as container:
+        last = None
+        for frame in container.decode(video=0):
+            last = frame
+        if last is None:
+            raise ValueError('Clip trước không có frame để nối.')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part = target.with_suffix('.partial.png')
+        last.to_image().save(part)
+        part.replace(target)
+
+
+def render_rife24(source: Path, target: Path, original: Path) -> None:
+    """Downsample RIFE 48 fps to 24 while preserving the source shot duration."""
+    seconds = probe(original)['duration']
+    if seconds <= 0:
+        raise ValueError('Clip nguồn RIFE không có thời lượng hợp lệ.')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _cached_render(target, ['-i', str(source), '-an', '-vf',
+        'fps=24,tpad=stop_mode=clone:stop_duration=0.15', '-t', str(seconds),
+        '-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'],
+        {'rife_source': digest(source), 'original': digest(original), 'fps': 24, 'version': 1}, seconds)
+    measured = probe(target)
+    if measured['fps'] is None or abs(measured['fps'] - 24) > .1 or measured['duration'] + .05 < seconds:
+        raise ValueError('Clip RIFE 24 fps không phủ đủ thời lượng shot nguồn.')
 
 
 def srt_time(seconds: float) -> str:
@@ -182,20 +253,29 @@ def render_film(scenes: list[dict], output_dir: Path, music: Path | None = None,
         listing.write_text("\n".join("file '" + str(p.resolve()).replace("\\", "/").replace("'", "'\\''") + "'" for p in clips), encoding="utf-8")
         fit, normalization = frame_fit(clip_info, fmt["render_size"], (width, height))
         fits.append(fit)
-        source = output_dir / f"source-{index:04d}.mp4"
         has_handle = available >= duration + handle + 1/24
         source_duration = duration + (handle + 1/24 if has_handle else 0)
         hashes = [digest(p) for p in clips]
-        _cached_render(source, ["-f", "concat", "-safe", "0", "-i", str(listing),
-                       "-an", "-vf", normalization, "-c:v", "libx264", "-crf", "18",
-                       "-t", str(source_duration)], {"clips": hashes, "filter": normalization,
-                       "duration": source_duration, "version": 1}, source_duration)
         target = output_dir / f"scene-{index:04d}.mkv"
         # Natural avoids dissolving action unless the caller marks a setting/chapter change.
         wanted = fmt["transition"] == "dissolve" or (fmt["transition"] == "natural" and
                  bool(scene.get("transition_boundary") or (index and scene.get("chapter_id") != scenes[index-1].get("chapter_id"))))
         dissolve = bool(index and wanted and previous_handle and duration >= handle)
-        args = ["-i", str(source), "-i", str(audio)]
+        next_scene = scenes[index+1] if index+1 < len(scenes) else None
+        next_wants = bool(next_scene and (fmt['transition'] == 'dissolve' or
+            (fmt['transition'] == 'natural' and (next_scene.get('transition_boundary') or
+             next_scene.get('chapter_id') != scene.get('chapter_id')))))
+        need_source = dissolve or (has_handle and next_wants)
+        source = output_dir / f"source-{index:04d}.mkv" if need_source else None
+        if source:
+            _cached_render(source, ["-f", "concat", "-safe", "0", "-i", str(listing),
+                           "-an", "-vf", normalization, "-c:v", "ffv1", "-level", "3",
+                           "-t", str(source_duration)], {"clips": hashes, "filter": normalization,
+                           "duration": source_duration, "version": 2}, source_duration)
+            args = ["-i", str(source), "-i", str(audio)]
+        else:
+            args = ["-f", "concat", "-safe", "0", "-i", str(listing), "-i", str(audio),
+                    "-vf", normalization]
         if dissolve:
             args += ["-ss", str(previous_duration), "-t", str(handle), "-i", str(previous_source),
                      "-filter_complex_threads", "1", "-filter_complex",
@@ -205,15 +285,16 @@ def render_film(scenes: list[dict], output_dir: Path, music: Path | None = None,
             args += ["-map", "0:v:0"]
         args += ["-map", "1:a:0", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
                  "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", "-t", str(duration)]
-        _cached_render(target, args, {"source": digest(source), "audio": digest(audio),
+        _cached_render(target, args, {"source": digest(source) if source else hashes,
+                       'filter': normalization if not source else None, "audio": digest(audio),
                        "previous": digest(previous_source) if dissolve else None,
                        "previous_duration": previous_duration if dissolve else None,
-                       "duration": duration, "dissolve": dissolve, "version": 1}, duration)
+                       "duration": duration, "dissolve": dissolve, "version": 2}, duration)
         if index:
             boundaries.append({"scene": index+1, "at": time_cursor, "effect": "dissolve" if dissolve else "hard_cut",
                                "seconds": handle if dissolve else 0,
                                "reason": "extra_tail_handle" if dissolve else "not_requested_or_insufficient_handle"})
-        previous_source, previous_duration, previous_handle = source, duration, has_handle
+        previous_source, previous_duration, previous_handle = source, duration, bool(source and has_handle)
         segments.append(target)
         scene_durations.append(duration)
         alignment.append({"scene": index + 1, "alignment": mode})
@@ -240,15 +321,22 @@ def render_film(scenes: list[dict], output_dir: Path, music: Path | None = None,
                                  for i, p in enumerate(chapters)), encoding="utf-8")
     film = output_dir / "film.mp4"
     args = ["-f", "concat", "-safe", "1", "-i", str(listing)]
+    duck = (project_settings or {}).get('audio_mix_profile') == 'voice_duck_v1'
     if music:
+        mix = ('[1:a]volume=0.12[bg];[bg][0:a]sidechaincompress='
+               'threshold=0.02:ratio=8:attack=20:release=300[duck];'
+               '[0:a][duck]amix=inputs=2:duration=first:normalize=0[mix];'
+               '[mix]loudnorm=I=-16:TP=-1.5:LRA=11[a]' if duck else
+               '[1:a]volume=0.12[bg];[0:a][bg]amix=inputs=2:duration=first[a]')
         args += ["-stream_loop", "-1", "-i", str(music), "-filter_complex",
-                 "[1:a]volume=0.12[bg];[0:a][bg]amix=inputs=2:duration=first[a]",
+                 mix,
                  "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac"]
     else:
         args += ["-c:v", "copy", "-c:a", "aac"]
     _cached_render(film, [*args, "-t", str(time_cursor), "-movflags", "+faststart"],
                    {"chapters": [digest(p) for p in chapters], "music": digest(music) if music else None,
-                    "duration": time_cursor, "version": 1}, time_cursor)
+                    "duration": time_cursor, "mix": 'voice_duck_v1' if duck and music else 'legacy',
+                    "version": 2}, time_cursor)
     result = probe(film)
     if not result.get("audio") or not result.get("width") or not math.isfinite(result["duration"]) or abs(result["duration"] - time_cursor) > max(.5, len(scenes)*.05):
         raise ValueError("Kiểm tra xuất phim thất bại: thiếu luồng hình/tiếng hoặc thời lượng không khớp.")
@@ -261,6 +349,7 @@ def render_film(scenes: list[dict], output_dir: Path, music: Path | None = None,
     subtitle = output_dir / "subtitles.srt"
     subtitle.write_text("\n".join(subtitles), encoding="utf-8-sig")
     metadata = output_dir / "export-metadata.json"
+    loudness = measure_loudness(film) if duck and music else None
     metadata.write_text(json.dumps({"export_quality": quality, "export_resolution": {"width": width, "height": height},
                                     "source_render_resolutions": sources, "duration_seconds": result["duration"],
                                     "subtitle_alignment": alignment, "format": fmt,
@@ -268,6 +357,8 @@ def render_film(scenes: list[dict], output_dir: Path, music: Path | None = None,
                                     "ai_upscale_model": None,
                                     "quality_claim": "native_16px_lattice_cropped_to_1080" if fits and set(fits) <= {"crop", "none"} else "resize_only_not_native_or_ai_enhancement",
                                     "transitions": boundaries, "checkpoint_group_size": 12,
+                                    "audio_mix_profile": 'voice_duck_v1' if duck and music else 'legacy',
+                                    "loudness": loudness,
                                     "notice": "1080p standard renders the nearest multiple of 16, then center-crops to the exact frame. Smaller sources are still ordinary Lanczos resizes. Approximate subtitles are not forced alignment."},
                                    ensure_ascii=False, indent=2), encoding="utf-8")
     return {"video": film, "subtitles": subtitle, "metadata": metadata}
