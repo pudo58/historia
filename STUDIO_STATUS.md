@@ -1,0 +1,90 @@
+# Historical Video Studio — trạng thái triển khai
+
+## Chạy local
+
+```powershell
+.\.venv\Scripts\python.exe -m ghm.cli serve --port 8000
+```
+
+Mở http://127.0.0.1:8000. API và UI dùng chung địa chỉ; 8765 là giao diện VV cũ, không phải Studio mới.
+Build UI: chạy `npm ci` rồi `npm run build` trong `ghm/frontend`.
+Dependency local khai báo trong `pyproject.toml`; không cần cài model AI lên Windows.
+
+## Đã nối vào bản chạy
+
+- Giao diện dự án tiếng Việt; quản lý GPU cũ giữ ở mục riêng, API host/export-backend được bảo toàn.
+- Dự án, nguồn, hồ sơ nhân vật/bối cảnh/trang phục, dàn ý thủ công, cảnh và trạng thái duyệt lưu SQLite.
+- Sao lưu SQLite bằng online backup vào `backups/` trước lần thêm bảng Studio đầu tiên; không xóa host cũ.
+- Nhập TXT/Markdown/PDF có chữ/ảnh/video/nhạc với giới hạn dung lượng và kiểm tra tệp.
+- PDF scan báo cần OCR; PDF thiếu chữ ở một số trang được cảnh báo. Video tham khảo trích 8 khung hình tại local.
+- Tách nguồn lịch sử khỏi ảnh tham khảo; kiểm tra đoạn trích nguyên văn và quyền sở hữu nguồn theo dự án.
+- Duyệt lời đọc/ảnh/clip theo revision; sửa lời đọc giữ ảnh và làm mất hiệu lực âm thanh/duyệt clip.
+- Artifact có SHA-256, giới hạn đường dẫn và kiểm tra trước khi đọc/xuất.
+- Hàng đợi lưu DB, log và snapshot; export local MP4/SRT/kịch bản có trích dẫn/cấu hình đã kiểm thử với media tổng hợp.
+- Transport ComfyUI lưu prompt ID trước khi POST; trường hợp chưa rõ chuyển sang đối chiếu, không tự gửi lại.
+
+## Chưa nghiệm thu — không coi là đã hoàn thành plan
+
+- Cài tự động đã mở qua mục **Bộ AI & kiểm chứng**: tự dò môi trường → preview metadata/checksum/dung lượng → xác nhận → job cài → job kiểm chứng output. Runpod Basic SSH đã có cầu nối PTY cho lệnh, file và HTTP loopback; không còn bắt đổi sang Full SSH. Chưa nghiệm thu toàn bộ cài/model/AI trên máy thuê sạch.
+- Chưa có GPU thật chạy thành công Qwen Image/Edit, Wan2.2, Qwen3-VL, VieNeu; chưa có bản phim mẫu AI 30–60 giây. Tác vụ AI khóa khi installation chưa verified, không có đường tắt trong UI để gắn nhãn verified.
+- Cần rà soát dependency transitive và lockfile môi trường; đo dung lượng cài bổ sung thay vì tổng bộ model; validate các tham số/node theo ComfyUI đã ghim.
+- Wizard dò các đường dẫn ComfyUI phổ biến và port 8188/8190; tự đề xuất tái sử dụng khi chỉ có một môi trường/dịch vụ. ComfyUI path độc lập với thư mục dịch vụ Studio; cấu hình thủ công thu gọn. Chưa tự phát hiện tất cả môi trường trên máy, xác minh volume bền vững theo nhà cung cấp hoặc dự toán chi phí phim dài.
+- Cần kiểm thử GPU thật cho OOM/hết ổ/mất SSH/cancel/recovery, không chỉ unit test local.
+- Kịch bản AI dài cần chia theo chương thay vì một lượt sinh; chưa có kiểm thử 10–20 phút và dự toán từ benchmark.
+- Chưa mở ghép nhạc, phụ đề theo cụm ngắn, batch render, chỉnh sửa/xóa/reorder toàn bộ loại tài nguyên, nhiều trích dẫn trong form, hay phân tích ảnh tham khảo tự động.
+- Bản nháp hiện cấu hình 832×480; bản chính 1280×720. Không tự giảm chất lượng do thiếu VRAM.
+- Giao diện GPU legacy vẫn có nhãn tiếng Anh và cần thay bằng wizard tiếng Việt.
+
+## Kiểm thử
+
+### Sửa cài LLM trên template Runpod có PIP_CONSTRAINT (27/09/2026)
+
+- Tái hiện trên Pod thật: venv LLM chỉ có pip; lệnh torch==2.8.0 bị constraint kế thừa ép torch==2.11.0+cu130 và trả ResolutionImpossible. Không phải lỗi GPU/model.
+- Lệnh pip của venv Studio loại bỏ PIP_CONSTRAINT/PIP_BUILD_CONSTRAINT và các override đích cài cho tiến trình con, dùng PIP_CONFIG_FILE=/dev/null. Không sửa biến môi trường/template toàn cục hoặc venv ComfyUI.
+- Báo lỗi theo công đoạn LLM/TTS/PyTorch cùng nhóm nguyên nhân (dependency, ổ đĩa, wheel, mạng/chứng chỉ); không lưu log pip thô có thể chứa token.
+- Tác vụ install failed có thể tiếp tục bằng snapshot đã chấp thuận, vẫn kiểm tra host/fingerprint/cấu hình/khóa. Không tự retry tác vụ AI thất bại. Đã gửi resume cho job 245ac437-c908-4c90-ab52-869f17bffc47 theo yêu cầu sửa lỗi của người dùng.
+- 78 test pass; Ruff, frontend build/type-check/lint pass. Việc resume đang chạy không được coi là cài xong hoặc workflow đã verified.
+
+### Runpod Basic SSH và đơn giản hóa bộ cài (27/09/2026, bản sửa mới)
+
+- PTY RPC một lần, chạy trong bộ nhớ, không daemon/agent thường trú, không mở cổng công khai. Giữ kiểm tra fingerprint. Bootstrap chờ raw-mode READY trước khi gửi stdin; nhận mã thoát thực; EOF không được coi là thành công và không tự gửi lại lệnh.
+- HTTP qua SSH chỉ tới port loopback đã chọn; không theo redirect. Truyền file có checksum SHA256, tải về file tạm rồi promote. Upload tối đa 32 MiB/lần, download file tối đa 2 GB; model lớn được tải trực tiếp trên GPU, không đi qua giới hạn upload này.
+- Thử thật với `test1`: chạy lệnh/stdin Unicode, nhận rc=7 đúng; gọi `/system_stats` nhận ComfyUI 0.36.0 port 8188; truyền hai chiều 238811 byte khớp SHA256. File/thư mục test riêng trên Pod đã được xóa, không xóa dữ liệu người dùng.
+- Bấm **Kiểm tra & chuẩn bị cài** trên UI thật thành công: `/ComfyUI` có sẵn, dịch vụ riêng `/workspace/historia`; 2 file model hợp lệ; còn 94.43 GiB model, dự tính cần trống 129.93 GiB gồm 35.50 GiB dự phòng; ổ trống 181.64 GiB tại lần kiểm tra. Đối chiếu `/object_info` có đủ 20 loại node trong ba graph.
+- Preview kiểm tra chỗ trống riêng theo filesystem model/dịch vụ. Pod thiếu espeak-ng; sau consent bộ cài bổ sung công cụ hệ thống bằng apt, giữ nguyên Python environment và tiến trình ComfyUI đã có (chặn nếu queue đang bận).
+- UI có nút mở bộ cài ngay tại Kết nối GPU; cấu hình nâng cao thu gọn, không dùng Run recipe để cài bộ Studio. Log download chỉ hiển thị dòng số byte đã lọc, không lưu output pip/HF thô; UI lấy 500 sự kiện mới nhất.
+- Chưa bấm chấp thuận license hoặc tải/cài 94.43 GiB trên Pod. Preview/transport thành công không đồng nghĩa toàn bộ model đã cài hoặc workflow đã verified. Kiểm chứng ảnh/clip/giọng thật vẫn là bước riêng.
+- Test protocol bao gồm EOF/rc/error, stdin không xuất hiện trong bootstrap, binary/checksum, từ chối HTTP khác đích, cancel đóng channel, giữ output cũ khi checksum sai; thêm test filesystem riêng, lọc secret khỏi progress và log tail.
+- Kết quả cuối: 76 test pass; Ruff trên module thay đổi và frontend lint/build/type-check pass. Có một cảnh báo deprecation từ Starlette TestClient.
+
+### Nền tảng bộ cài (27/09/2026)
+
+- API `/api/studio/hosts/{id}/installation`: GET trạng thái; POST `/prepare`, `/start`, `/verify`.
+- Preview chỉ đọc SSH và metadata Hugging Face, không cài/download; hết hạn sau một giờ. Snapshot chứa host/fingerprint, root/port, model revision/checksum, graph hashes và dependency pins. Consent bắt buộc; không nhận graph/repository tùy ý.
+- Đã resolve metadata thật cho 11 model ComfyUI và 3 bộ dịch vụ: khoảng 100,94 GiB (có thể đổi ở lần resolve kế tiếp); URL Lightning đã sửa sang repo chính thức lightx2v/Qwen-Image-Lightning.
+- SHA256 cho LFS và Git blob SHA1 cho file nhỏ trong snapshot dịch vụ. File hợp lệ được giữ, file sai checksum không bị ghi đè. Preview tính model thiếu + 35 GiB dự phòng, kiểm tra lại khi thực thi.
+- Không sửa driver, không tự stop ComfyUI, không thay venv không thuộc Studio; chặn queue đang bận, root/symlink không an toàn và filesystem thiếu chỗ. Pip/HF output thô không lưu để tránh lộ signed URL/token.
+- Job install/verify lưu DB; bấm lặp trả cùng job. Restart/ngắt không tự cài lại; resume kiểm tra snapshot và khóa flock remote, không hứa tiếp tục giữa bước diffusion. Mất SSH giữ trạng thái cần đối chiếu.
+- `installed` khác `verified`. Verify chạy Qwen Image, Edit, Wan clip, tiếng Việt và Qwen3-VL; chỉ đánh dấu verified khi output local đọc được và JSON LLM hợp lệ. Artifact kiểm chứng tải được qua API/UI.
+- Test tự động gồm API/FakeExecutor/FakeBackend với media tổng hợp, không phải benchmark GPU. E2E cài trọn bộ trên Pod test1 còn chờ xác nhận tải/cài của người dùng.
+- Frontend lint/build/type-check pass; UI đã kiểm tra trực tiếp trên localhost:8000 với test1. Không tạo job cài trên dữ liệu thật.
+- Dependency trực tiếp đã ghim, phiên bản package đã đối chiếu PyPI; dependency transitive chưa khóa toàn bộ. Lưu pip freeze môi trường dịch vụ sau cài. Không công bố bộ này là đã được chứng nhận trên GPU nào trước smoke test thật.
+
+### Sửa preflight Runpod Basic SSH (27/09/2026)
+
+- Đã kiểm thử đọc thông tin thật qua API với host `test1`: RTX PRO 4500 Blackwell 31,86 GiB VRAM; driver 580.126.16; CUDA toolkit 13.0; Python 3.12.3.
+- Basic SSH dùng shell PTY, đóng khung kết quả có mã thoát từng lệnh; không nhầm phản hồi gateway mã 0 với lệnh thành công. Các recipe ghi dữ liệu không được tự retry qua PTY.
+- Tính RAM theo giới hạn cgroup nếu có (không dùng tổng RAM node vật lý làm RAM Pod); kết quả lưu và hiện lại khi reload.
+- WARN về SCP/SFTP/Full SSH tách biệt với GPU PASS. Đây chỉ là kiểm chứng preflight, không phải kiểm chứng workflow AI hoặc cài đặt.
+- 43 test pass; frontend lint/build pass.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check studio tests/test_studio.py
+```
+
+Frontend: `npm run lint`, `npm run build` (bao gồm TypeScript strict).
+Các test media tạo video màu đơn sắc và WAV im lặng để kiểm tra ghép/độ dài/phụ đề, **không phải kết quả AI và không chứng minh chất lượng model**.
+
+Giữ cùng Windows keyring hoặc `GHM_MASTER_KEY` đã dùng để giải mã host cũ. Nếu thay khóa, cần nhập lại credential; không dùng demo master key và không xóa DB để xử lý lỗi.
+Dừng app/tunnel/render không dừng tiền thuê GPU.

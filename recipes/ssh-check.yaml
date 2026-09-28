@@ -1,0 +1,11 @@
+name: ssh-check
+description: Safely verifies that the confirmed SSH connection can execute a command.
+steps:
+  - id: ssh-command
+    description: Run a harmless shell command over the pinned SSH connection.
+    check: "false"
+    run: "true"
+    verify: "true"
+    timeout: 20
+    retries: 1
+    depends_on: []

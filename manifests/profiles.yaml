@@ -1,0 +1,23 @@
+profiles:
+  - id: rtx5090_32gb
+    label: RTX 5090 · 32 GB
+    gpu_pattern: "RTX 5090"
+    min_vram_gb: 30
+    min_ram_gb: 32
+    min_disk_gb: 80
+    min_driver: 580
+    torch_index: https://download.pytorch.org/whl/cu130
+    torch_version: "2.11.0"
+    cuda_version: "13.0"
+    args: []
+  - id: rtx4060_8gb
+    label: RTX 4060 · 8 GB
+    gpu_pattern: "RTX 4060"
+    min_vram_gb: 7
+    min_ram_gb: 16
+    min_disk_gb: 50
+    min_driver: 580
+    torch_index: https://download.pytorch.org/whl/cu130
+    torch_version: "2.11.0"
+    cuda_version: "13.0"
+    args: ["--lowvram"]

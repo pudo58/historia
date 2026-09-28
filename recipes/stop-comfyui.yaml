@@ -1,0 +1,9 @@
+name: stop-comfyui
+description: Stop only the GHM-owned process. GPU rental billing continues.
+steps:
+  - id: stop
+    description: Validate PID ownership and terminate the managed ComfyUI process.
+    action: stop_service
+    check: "false"
+    run: "true"
+    verify: "true"

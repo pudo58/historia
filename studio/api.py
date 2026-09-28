@@ -1,0 +1,249 @@
+import asyncio
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+
+from studio.importer import EXTENSIONS, import_file
+from studio.models import Artifact, Installation, Job, JobEvent, Project
+from studio.packs import pack_info
+from studio.schemas import (
+    Approval,
+    CharacterInput,
+    InstallConsent,
+    JobInput,
+    OutlineApproval,
+    ProjectInput,
+    ProductionInput,
+    ProductionRunInput,
+    SceneInput,
+    SceneUpdate,
+    SourceUpdate,
+    TextSourceInput,
+)
+
+
+def router(service, jobs, host_lock):
+    api = APIRouter(prefix="/api/studio")
+
+    @api.get("/status")
+    def status():
+        with service.sessions() as session:
+            ready = bool(session.scalar(select(Installation.host_id).where(Installation.status == 'verified')))
+        return {"name": "Historical Video Studio", "version": "0.4.0", "ai_ready": ready,
+                "message": "Cài bộ AI qua Full SSH trong Bộ AI & kiểm chứng. Chỉ mở tác vụ AI sau khi output kiểm chứng pass.",
+                "billing_notice": "Dừng render hoặc đóng web KHÔNG dừng tính tiền GPU thuê."}
+
+    from ghm.schemas import HostOptions
+
+    @api.get('/hosts/{id}/installation')
+    def installation(id: str):
+        return jobs.installations.state(id)
+
+    @api.post('/hosts/{id}/installation/discover')
+    async def discover_installation(id: str):
+        async with host_lock(id):
+            return await jobs.installations.discover(id)
+
+    @api.post('/hosts/{id}/installation/prepare')
+    async def prepare_installation(id: str, payload: HostOptions):
+        if payload.workflow is not None:
+            raise HTTPException(422, 'Bộ cài chỉ dùng workflow đóng gói; không nhận graph tùy ý.')
+        async with host_lock(id):
+            return await jobs.installations.prepare(id, payload)
+
+    @api.post('/hosts/{id}/installation/start')
+    async def install(id: str, payload: InstallConsent):
+        async with host_lock(id):
+            return jobs.installations.start(id, payload.plan_id, payload.license_accepted)
+
+    @api.post('/hosts/{id}/installation/video-test')
+    async def video_test(id: str):
+        async with host_lock(id):
+            return jobs.installations.video_test(id)
+
+    @api.post('/hosts/{id}/installation/verify')
+    async def verify_installation(id: str):
+        async with host_lock(id):
+            return jobs.installations.verify(id)
+
+    @api.get("/packs")
+    def packs():
+        with service.sessions() as session:
+            installations = [service.read(i) for i in session.scalars(select(Installation))]
+        return {"packs": [pack_info()], "installations": installations}
+
+    @api.get("/projects")
+    def projects():
+        return service.projects()
+
+    @api.post("/projects", status_code=201)
+    def create(payload: ProjectInput):
+        if payload.host_id:
+            jobs.hosts._require_host(payload.host_id)
+        return service.create_project(payload)
+
+    @api.delete("/projects/{id}", status_code=204)
+    def delete_project(id: str):
+        service.delete_project(id)
+
+    @api.get("/projects/{id}")
+    def get_project(id: str):
+        return service.project(id)
+
+    @api.patch("/projects/{id}")
+    def update_project(id: str, payload: ProjectInput):
+        if payload.host_id:
+            jobs.hosts._require_host(payload.host_id)
+        return service.update_project(id, payload)
+
+    @api.post("/projects/{id}/sources", status_code=201)
+    def add_text(id: str, payload: TextSourceInput):
+        return service.add_text(id, payload)
+
+    @api.patch("/sources/{id}")
+    def update_source(id: str, payload: SourceUpdate):
+        return service.update_source(id, payload.selected, payload.description)
+
+    @api.post("/projects/{id}/upload", status_code=201)
+    async def upload(id: str, request: Request, name: str = Query(min_length=1, max_length=200), role: str = "historical"):
+        service.require(Project, id)
+        service.assert_idle(id)
+        if role not in {"historical", "visual"}:
+            raise HTTPException(422, "Chọn nguồn lịch sử hoặc tham khảo mỹ thuật.")
+        suffix = Path(name).suffix.lower()
+        if suffix not in EXTENSIONS:
+            raise HTTPException(415, "Chỉ nhận TXT, Markdown, PDF, ảnh, video hoặc nhạc.")
+        directory = service.root / "uploads" / str(uuid4())
+        directory.mkdir(parents=True)
+        path = directory / ("original" + suffix)
+        count = 0
+        try:
+            with path.open("wb") as handle:
+                async for chunk in request.stream():
+                    count += len(chunk)
+                    if count > 250_000_000:
+                        raise HTTPException(413, "Tệp vượt giới hạn 250 MB.")
+                    handle.write(chunk)
+            if not count:
+                raise HTTPException(422, "Tệp rỗng.")
+            if suffix in {".txt", ".md", ".pdf"} and count > 25_000_000:
+                raise HTTPException(413, "Tài liệu vượt giới hạn 25 MB.")
+            return await asyncio.to_thread(import_file, service, id, path, Path(name).name, role)
+        except HTTPException:
+            path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:  # noqa: BLE001 -- untrusted file parsers must not leak internals
+            path.unlink(missing_ok=True)
+            raise HTTPException(422, str(exc) if isinstance(exc, ValueError) else "Không đọc được tệp. Kiểm tra định dạng hoặc tệp bị hỏng.") from None
+
+    @api.post("/projects/{id}/characters", status_code=201)
+    def add_character(id: str, payload: CharacterInput):
+        return service.add_character(id, payload)
+
+    @api.post("/projects/{id}/scenes", status_code=201)
+    def add_scene(id: str, payload: SceneInput):
+        return service.add_scene(id, payload)
+
+    @api.patch("/scenes/{id}")
+    def update_scene(id: str, payload: SceneUpdate):
+        return service.update_scene(id, payload)
+
+    @api.post("/scenes/{id}/approve")
+    def approve(id: str, payload: Approval):
+        return service.approve(id, payload.revision, payload.target, payload.approved)
+
+    @api.post("/projects/{id}/outline/approve")
+    def approve_outline(id: str, payload: OutlineApproval):
+        service.assert_idle(id)
+        with service.sessions() as session:
+            row = session.get(Project, id)
+            if not row:
+                raise KeyError(id)
+            row.data = {**row.data, "outline": payload.model_dump()["outline"], "outline_approved": True}
+            session.commit()
+        return service.project(id)
+
+    @api.get('/projects/{id}/production')
+    def production(id: str):
+        return jobs.production(id)
+
+    @api.post('/projects/{id}/production', status_code=201)
+    async def start_production(id: str, payload: ProductionInput):
+        return jobs.start_production(id, payload.stage)
+
+    @api.get('/projects/{id}/production-runs')
+    def production_runs(id: str):
+        return jobs.runs.list(id)
+
+    @api.post('/projects/{id}/production-runs', status_code=201)
+    def create_production_run(id: str, payload: ProductionRunInput):
+        return jobs.runs.create(id, payload)
+
+    @api.get('/production-runs/{id}')
+    def production_run(id: str):
+        return jobs.runs.get(id)
+
+    @api.post('/production-runs/{id}/pause')
+    def pause_production_run(id: str):
+        return jobs.runs.action(id, 'pause')
+
+    @api.post('/production-runs/{id}/resume')
+    def resume_production_run(id: str):
+        return jobs.runs.action(id, 'resume')
+
+    @api.post('/production-runs/{id}/accept-duration')
+    def accept_production_duration(id: str):
+        return jobs.runs.action(id, 'accept-duration')
+
+    @api.get("/jobs")
+    def list_jobs(project_id: str | None = None):
+        return jobs.list(project_id)
+
+    @api.post("/projects/{id}/jobs", status_code=201)
+    async def submit(id: str, payload: JobInput):
+        return jobs.submit(id, payload)
+
+    @api.get("/jobs/{id}/events")
+    def events(id: str, after: int = Query(default=0, ge=0), tail: bool = False):
+        service.require(Job, id)
+        with service.sessions() as session:
+            rows = [service.read(e) for e in session.scalars(select(JobEvent).where(JobEvent.job_id == id, JobEvent.id > after).order_by(JobEvent.id.desc() if tail else JobEvent.id).limit(500))]
+            return list(reversed(rows)) if tail else rows
+
+    @api.post("/jobs/{id}/cancel")
+    async def cancel(id: str):
+        return await jobs.cancel(id)
+
+    @api.post('/jobs/{id}/pause')
+    async def pause(id: str):
+        return jobs.pause(id)
+
+    @api.post('/jobs/{id}/abandon')
+    async def abandon(id: str, payload: dict):
+        return jobs.abandon(id, confirmed=payload.get('confirmed'),
+                            remote_state_unknown=payload.get('remote_state_unknown'))
+
+    @api.post("/jobs/{id}/resume")
+    async def resume(id: str):
+        return jobs.resume(id)
+
+    @api.get("/projects/{id}/artifacts")
+    def artifacts(id: str):
+        service.require(Project, id)
+        with service.sessions() as session:
+            return [service.read(a) for a in session.scalars(select(Artifact).where(Artifact.project_id == id))]
+
+    @api.get("/artifacts/{id}/file")
+    def artifact(id: str, download: bool = False):
+        row = service.require(Artifact, id)
+        path = service.artifact_path(id)
+        # Never inline user-supplied HTML, SVG, scripts, or text.
+        inline = row.media_type.startswith(("image/", "video/", "audio/")) and row.media_type != "image/svg+xml"
+        return FileResponse(path, media_type=row.media_type, filename=row.name,
+                            content_disposition_type="inline" if inline and not download else "attachment",
+                            headers={"Content-Security-Policy": "default-src 'none'; sandbox"})
+
+    return api

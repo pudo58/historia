@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vv · Video Variations</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2e; --line:#263454; --text:#e8eefc; --muted:#91a0c2; --accent:#70e1c1; --danger:#ff8c9d; }
+    * { box-sizing:border-box } body { margin:0; background:radial-gradient(circle at 20% 0%,#18284b 0,#0b1020 42%); color:var(--text); font:15px Inter,ui-sans-serif,system-ui,sans-serif; min-height:100vh }
+    .shell { max-width:1120px; margin:auto; padding:42px 24px 70px } .eyebrow { color:var(--accent); letter-spacing:.14em; text-transform:uppercase; font-size:12px; font-weight:700 }
+    h1 { font-size:46px; line-height:1; margin:12px 0 } .sub { color:var(--muted); max-width:650px; line-height:1.6 }
+    .grid { display:grid; grid-template-columns:1.05fr .95fr; gap:18px; margin-top:30px } .card { background:rgba(18,26,46,.88); border:1px solid var(--line); border-radius:20px; padding:22px; box-shadow:0 18px 50px #05081266 }
+    h2 { font-size:17px; margin:0 0 18px } label { display:block; color:var(--muted); font-size:13px; margin:15px 0 7px } input { width:100%; border:1px solid var(--line); background:#0a1122; color:var(--text); border-radius:10px; padding:12px }
+    button { margin-top:20px; border:0; border-radius:10px; padding:12px 17px; background:var(--accent); color:#07131a; font-weight:800; cursor:pointer } button:disabled { opacity:.5; cursor:wait }
+    .hint { color:var(--muted); font-size:12px; line-height:1.5; margin-top:12px } .job { border-top:1px solid var(--line); padding:15px 0; display:grid; gap:7px } .job:first-child { border-top:0 }
+    .status { font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase } .running { color:#f5ce75 } .complete { color:var(--accent) } .failed { color:var(--danger) } code { color:#b6c8ee; overflow-wrap:anywhere }
+    .empty { color:var(--muted); padding:20px 0 } @media (max-width:760px) { .grid { grid-template-columns:1fr } h1 { font-size:38px } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="eyebrow">vv / phase 01</div>
+    <h1>Video variations,<br>without the guesswork.</h1>
+    <p class="sub">A local control room for the resumable video pipeline. Choose a source, launch a CPU preprocessing run, and keep an eye on every job.</p>
+    <section class="grid">
+      <form class="card" id="run-form">
+        <h2>Start a pipeline run</h2>
+        <label for="video">Source video path</label>
+        <input id="video" placeholder="C:\\video\\episode-01.mp4" required>
+        <label for="config">Config path</label>
+        <input id="config" value="configs/example.yaml" required>
+        <button id="submit">Run probe → extract → encode</button>
+        <div class="hint">The server reads paths on the machine where vv is running. FFmpeg and ffprobe must be on PATH.</div>
+      </form>
+      <section class="card">
+        <h2>Recent runs</h2>
+        <div id="jobs" class="empty">No runs yet.</div>
+      </section>
+    </section>
+  </main>
+  <script>
+    const jobs = document.querySelector('#jobs');
+    const form = document.querySelector('#run-form');
+    const button = document.querySelector('#submit');
+    async function refresh() {
+      const response = await fetch('/api/jobs');
+      const data = await response.json();
+      jobs.className = data.length ? '' : 'empty';
+      jobs.innerHTML = data.length ? data.slice().reverse().map(job => `
+        <div class="job"><div><span class="status ${job.status}">${job.status}</span> <code>${job.job_id}</code></div>
+        <div class="hint">${job.video || ''}</div>
+        ${job.output ? `<div class="hint">Output: <code>${job.output}</code></div>` : ''}
+        ${job.error ? `<div class="hint" style="color:var(--danger)">${job.error}</div>` : ''}</div>`).join('') : 'No runs yet.';
+    }
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); button.disabled = true;
+      const response = await fetch('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({video_path:document.querySelector('#video').value, config_path:document.querySelector('#config').value}) });
+      const data = await response.json(); if (!response.ok) alert(data.error); await refresh(); button.disabled = false;
+    });
+    refresh(); setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

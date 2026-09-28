@@ -1,0 +1,25 @@
+name: restart-comfyui
+description: Restart only the owned ComfyUI process; never stop the rented GPU.
+requires_preflight: true
+steps:
+  - id: stop
+    description: Check process ownership and stop the managed service.
+    action: stop_service
+    check: "false"
+    run: "true"
+    verify: "true"
+  - id: start
+    description: Start the managed service bound to loopback.
+    action: start_service
+    check: "false"
+    run: "true"
+    verify: "true"
+    depends_on: [stop]
+  - id: health
+    description: Check the actual ComfyUI API.
+    action: health
+    check: "false"
+    run: "true"
+    verify: "true"
+    retries: 5
+    depends_on: [start]

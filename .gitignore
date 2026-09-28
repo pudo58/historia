@@ -1,0 +1,95 @@
+﻿# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.pass
+id_ed25519
+id_ed25519.pub
+id_ed25520
+id_ed25520.pub
+id_rsa
+id_rsa.pub
+id_ecdsa
+id_ecdsa.pub
+*.p12
+*.pfx
+credentials
+credentials.*
+secrets/
+.secrets/
+
+# Node / frontend build
+node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Runtime / local data (Historia)
+studio-data/
+.ghm/
+.oos-store/
+*.db
+*.sqlite
+*.sqlite3
+ghm.db
+
+# Models / weights / media outputs
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+*.mp4
+*.wav
+*.flac
+*.webm
+# Keep tiny fixtures under tests if any; ignore generated media elsewhere
+*.png
+!tests/**/*.png
+!**/fixtures/**/*.png
+
+# ComfyUI installs / large vendor trees
+ComfyUI/
+comfyui/
+backups/
+
+# Scratch / OneDrive / agent temp
+_tmp_*
+/_*.py
+/_*.json
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+*.tmp
+*.temp
+.agent-tools/
+agent-tools/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~

@@ -1,0 +1,20 @@
+name: verify-backend
+description: Verify health and execute the user-provided API workflow. This is the only readiness gate.
+requires_preflight: true
+validates_backend: true
+steps:
+  - id: health
+    description: Validate the ComfyUI API over a private SSH forward.
+    action: health
+    check: "false"
+    run: "true"
+    verify: "true"
+    retries: 2
+  - id: smoke
+    description: Queue the approved workflow and wait for successful history with output.
+    action: smoke
+    check: "false"
+    run: "true"
+    verify: "true"
+    timeout: 1800
+    depends_on: [health]

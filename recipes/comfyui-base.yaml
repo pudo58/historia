@@ -1,0 +1,124 @@
+name: comfyui-base
+description: Install or repair a pinned managed ComfyUI. Does not claim ready until Verify backend passes.
+requires_preflight: true
+variables:
+  comfy_ref: ee71d5c4993f29086b27fde1629a945ae48425bf
+steps:
+  - id: system-deps
+    description: Install system dependencies on Debian/Ubuntu; never change GPU drivers.
+    check: command -v git && command -v ffmpeg && command -v gcc && python3 -c 'import venv, ensurepip'
+    run: |
+      set -eu
+      command -v apt-get >/dev/null || { echo 'Install git, ffmpeg, build tools, Python 3.11+ and venv manually on this distro.' >&2; exit 40; }
+      if [ "$(id -u)" -eq 0 ]; then
+        apt-get update && env DEBIAN_FRONTEND=noninteractive apt-get install -y git ffmpeg build-essential python3-venv
+      else
+        sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y git ffmpeg build-essential python3-venv
+      fi
+    verify: command -v git && command -v ffmpeg && command -v gcc && python3 -c 'import venv, ensurepip; import sys; assert sys.version_info >= (3,11)'
+    timeout: 900
+    retries: 1
+  - id: volume
+    description: Check the actual selected installation filesystem.
+    check: mkdir -p {root} && python3 -c 'import shutil,sys; assert shutil.disk_usage(sys.argv[1]).free >= float(sys.argv[2])*1024**3, "Not enough space on selected volume"' {root} {min_disk_gb}
+    run: echo 'Selected volume is not writable or has insufficient free space.' >&2; exit 41
+    verify: test -w {root}
+    depends_on: [system-deps]
+  - id: stop-managed
+    description: Stop only a process owned by this installation before modifying dependencies.
+    action: stop_service
+    check: |
+      false
+    run: |
+      true
+    verify: |
+      true
+    depends_on: [volume]
+  - id: python-env
+    description: Create an isolated Python virtual environment.
+    check: test -x {venv}/bin/python
+    run: python3 -m venv {venv}
+    verify: |
+      {python} -c 'import sys; assert sys.prefix != sys.base_prefix; assert sys.version_info >= (3,11)'
+    depends_on: [stop-managed]
+  - id: pytorch
+    description: Install and verify the profile-pinned CUDA PyTorch build.
+    check: |
+      {python} -c 'import torch,sys; assert torch.__version__.split("+")[0] == sys.argv[1]; assert torch.version.cuda == sys.argv[2]; assert torch.cuda.is_available(); (torch.ones(1,device="cuda")+1).cpu()' {torch_version} {cuda_version}
+    run: |
+      {python} -m pip install torch=={torch_version} torchvision==0.26.0 torchaudio=={torch_version} --index-url {torch_index}
+    verify: |
+      {python} -c 'import torch,sys; assert torch.__version__.split("+")[0] == sys.argv[1]; assert torch.version.cuda == sys.argv[2]; assert torch.cuda.is_available(); (torch.ones(1,device="cuda")+1).cpu()' {torch_version} {cuda_version}
+    timeout: 1800
+    retries: 1
+    depends_on: [python-env]
+  - id: comfyui
+    description: Install ComfyUI v0.36.0 at its full commit SHA; preserve local modifications.
+    check: test -f {root}/.comfy-requirements-commit && test "$(cat {root}/.comfy-requirements-commit)" = {comfy_ref} && test "$(git -C {comfy} rev-parse HEAD)" = {comfy_ref} && test -z "$(git -C {comfy} status --porcelain)"
+    run: |
+      set -eu
+      if [ -d {comfy}/.git ]; then
+        test -z "$(git -C {comfy} status --porcelain)" || { echo 'Local ComfyUI changes detected; refusing to overwrite.' >&2; exit 42; }
+        test "$(git -C {comfy} remote get-url origin)" = https://github.com/Comfy-Org/ComfyUI.git
+      else
+        mkdir -p {comfy}
+        test -z "$(ls -A {comfy})" || { echo 'Existing unmanaged files; use Adopt mode or a new root.' >&2; exit 43; }
+        git -C {comfy} init
+        git -C {comfy} remote add origin https://github.com/Comfy-Org/ComfyUI.git
+      fi
+      git -C {comfy} fetch --depth 1 origin {comfy_ref}
+      git -C {comfy} checkout --detach {comfy_ref}
+      {python} -m pip install -r {comfy}/requirements.txt
+      {python} -m pip check
+      printf '%s' {comfy_ref} > {root}/.comfy-requirements-commit
+    verify: |
+      {python} -m pip check && {python} {comfy}/main.py --help >/dev/null && {python} -c 'import torch,sys; assert torch.__version__.split("+")[0] == sys.argv[1]; assert torch.cuda.is_available()' {torch_version}
+    timeout: 1800
+    retries: 1
+    depends_on: [pytorch]
+  - id: custom-nodes
+    description: Install only locally reviewed custom-node repositories pinned to full commit SHAs.
+    action: install_nodes
+    manifest_path: manifests/nodes.yaml
+    check: |
+      false
+    run: |
+      true
+    verify: |
+      true
+    timeout: 1800
+    depends_on: [comfyui]
+  - id: models
+    description: Resume selected model downloads into ComfyUI/models and verify every SHA256.
+    action: install_models
+    manifest_path: manifests/models.yaml
+    check: |
+      false
+    run: |
+      true
+    verify: |
+      true
+    timeout: 3600
+    retries: 1
+    depends_on: [custom-nodes]
+  - id: start-comfyui
+    description: Launch an ownership-tracked process bound only to 127.0.0.1.
+    action: start_service
+    check: |
+      false
+    run: |
+      true
+    verify: |
+      true
+    depends_on: [models]
+  - id: health-check
+    description: Validate the actual ComfyUI system_stats JSON over private SSH forwarding.
+    action: health
+    check: |
+      false
+    run: |
+      true
+    verify: |
+      true
+    retries: 5
+    depends_on: [start-comfyui]

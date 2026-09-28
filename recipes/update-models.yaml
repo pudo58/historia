@@ -1,0 +1,13 @@
+name: update-models
+description: Download and verify the selected model manifest. Re-run Verify backend afterward.
+requires_preflight: true
+steps:
+  - id: models
+    description: Resume downloads and verify pinned checksums.
+    action: install_models
+    manifest_path: manifests/models.yaml
+    check: "false"
+    run: "true"
+    verify: "true"
+    timeout: 3600
+    retries: 1

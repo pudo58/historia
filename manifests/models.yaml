@@ -1,0 +1,45 @@
+# Metadata candidates from the user's starter list. Resolve before install.
+# Disabled entries are NOT downloaded. No unknown checksum is fabricated.
+models:
+  - name: wan-vace-q5
+    repo: QuantStack/Wan2.1-VACE-14B-GGUF
+    filename: Wan2.1-VACE-14B-Q5_K_M.gguf
+    destination: models/unet
+    profiles: [rtx5090_32gb]
+    notes: Verify the original repository checksum; the mirror checksum is not trusted.
+  - name: wan-vace-q4
+    repo: QuantStack/Wan2.1-VACE-14B-GGUF
+    destination: models/unet
+    profiles: [rtx4060_8gb]
+    enabled: false
+    notes: Exact Q4_K_M filename must be chosen from the original repository.
+  - name: umt5-fp8
+    repo: Comfy-Org/Wan_2.1_ComfyUI_repackaged
+    filename: split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+    destination: models/text_encoders
+    profiles: [rtx5090_32gb]
+  - name: umt5-gguf
+    repo: city96/umt5-xxl-encoder-gguf
+    destination: models/text_encoders
+    profiles: [rtx4060_8gb]
+    enabled: false
+    notes: Choose Q4 or Q5 and an exact filename compatible with the real workflow.
+  - name: wan-vae
+    repo: Comfy-Org/Wan_2.1_ComfyUI_repackaged
+    filename: split_files/vae/wan_2.1_vae.safetensors
+    destination: models/vae
+    profiles: [rtx5090_32gb, rtx4060_8gb]
+  - name: lightx2v-t2v
+    repo: Kijai/WanVideo_comfy
+    filename: Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors
+    sha256: 914fafa5dded72e6c470d6f764b97fe4d71567dae7cc01d1181b310efd5c37a6
+    destination: models/loras
+    enabled: false
+    notes: T2V LoRA compatibility with VACE is unverified. Not enabled automatically.
+  - name: sam31
+    repo: Comfy-Org/sam3.1
+    filename: sam3.1_multiplex_fp16.safetensors
+    destination: models/checkpoints
+    gated: true
+    enabled: false
+    notes: Requires explicit SAM License acceptance and a compatible workflow/node.
