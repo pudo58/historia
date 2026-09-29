@@ -3,6 +3,7 @@
 Snapshots are never edited. Checkpoints carry derived media separately. No remote
 submission is retried automatically after an ambiguous failure.
 """
+import logging
 from copy import deepcopy
 
 from sqlalchemy import select, text
@@ -52,6 +53,29 @@ def dependency_identity(project, scene, kind):
     return {'project': project}
 
 
+def active_ids(checkpoint):
+    """Jobs the run is currently waiting on. `current_job_id` stays the first entry for old readers."""
+    ids = list(checkpoint.get('active_job_ids') or [])
+    current = checkpoint.get('current_job_id')
+    if current and current not in ids:
+        ids.insert(0, current)
+    return ids
+
+
+def set_active(checkpoint, ids):
+    if ids:
+        checkpoint['active_job_ids'] = list(ids)
+        checkpoint['current_job_id'] = ids[0]
+    else:
+        checkpoint.pop('active_job_ids', None)
+        checkpoint.pop('current_job_id', None)
+
+
+def parallel_hosts(run):
+    """Extra Pods that may render Wan clips of this run at the same time as the main Pod."""
+    return [h for h in (run.consent or {}).get('parallel_host_ids') or [] if h != run.snapshot.get('host_id')]
+
+
 class ProductionRuns:
     def __init__(self, jobs):
         self.jobs, self.service = jobs, jobs.service
@@ -71,11 +95,15 @@ class ProductionRuns:
         media = run.checkpoint.get('media', {})
         value['scene_count'] = len(run.snapshot['scenes'])
         value['completed_scene_count'] = sum(bool(m.get('clip_ids')) for m in media.values())
-        current_id = run.checkpoint.get('current_job_id')
-        current = self.service.require(Job, current_id) if current_id else None
-        value['current_job_id'] = current_id
+        ids = active_ids(run.checkpoint)
+        active = [self.service.require(Job, id) for id in ids]
+        current = active[0] if active else None
+        value['current_job_id'] = current.id if current else None
         value['current_scene_id'] = current.scene_id if current else None
         value['queue_status'] = current.status if current else None
+        value['active_job_ids'] = ids
+        value['active_scene_ids'] = [j.scene_id for j in active if j.scene_id]
+        value['parallel_host_ids'] = parallel_hosts(run)
         value['progress'] = 100 if run.status == 'completed' else min(99, round(
             len(run.checkpoint.get('jobs', {})) * 100 /
             ((4 if run.snapshot.get('frame_interpolation') == 'rife24' else 3) * value['scene_count'] + 1)))
@@ -97,14 +125,15 @@ class ProductionRuns:
             existing = session.scalar(select(ProductionRun).where(ProductionRun.project_id == project_id,
                 ProductionRun.status.in_(LIVE)))
             if existing:
-                current_id = existing.checkpoint.get('current_job_id')
-                current = session.get(Job, current_id) if current_id else None
-                if existing.status not in {'paused', 'duration_review', 'failed'} or (current and
-                        (current.status in {'running', 'reconciling', 'cancelling'} or self.jobs.remote_pending(current.result))):
+                live = [j for j in (session.get(Job, id) for id in active_ids(existing.checkpoint)) if j]
+                if existing.status not in {'paused', 'duration_review', 'failed'} or any(
+                        current.status in {'running', 'reconciling', 'cancelling'} or self.jobs.remote_pending(current.result)
+                        for current in live):
                     raise ValueError('Dự án đã có lượt sản xuất. Tạm dừng/đối chiếu lượt hiện tại trước.')
-                if current and current.status in {'queued', 'paused'}:
-                    current.status = 'cancelled'
-                    session.flush()
+                for current in live:
+                    if current.status in {'queued', 'paused'}:
+                        current.status = 'cancelled'
+                session.flush()
                 existing.status = 'superseded'
             project = self.service.project(project_id)
             if not project['scenes']:
@@ -128,6 +157,19 @@ class ProductionRuns:
                 needed.append('qwen_edit')
             if not self.jobs.installations.component_proven(host_id, needed):
                 raise ValueError('Model cần dùng chưa sẵn sàng/kiểm chứng trên GPU đã chọn.')
+            parallel = list(dict.fromkeys(request.parallel_host_ids))
+            if host_id in parallel:
+                raise ValueError('Pod chính của dự án đã được dùng; chỉ chọn thêm Pod khác để chạy song song.')
+            if parallel and 'wan_i2v' not in needed:
+                raise ValueError('Chạy song song chỉ tăng tốc cảnh Wan; dự án không có cảnh Wan nào.')
+            for extra in parallel:
+                host = self.jobs.hosts._require_host(extra)
+                if not host.pinned_fingerprint:
+                    raise ValueError(f'Pod song song {host.label}: xác nhận fingerprint SSH trước.')
+                self.jobs.assert_no_abandoned_remote(extra)
+                self.jobs.recipes.assert_recipes_idle(extra)
+                if not self.jobs.installations.component_proven(extra, ['wan_i2v']):
+                    raise ValueError(f'Pod song song {host.label}: Wan chưa cài/kiểm chứng trên máy này.')
             if (project.get('keyframe_profile') == 'lightning' and any(
                     not s.get('reference_ids') and not s.get('character_ids') for s in project['scenes']) and
                     not self.jobs.optional_ready(host_id, 'qwen-image-lightning-fp8')):
@@ -159,7 +201,8 @@ class ProductionRuns:
             from studio.tts_device import new_tts_device
             snapshot["tts_device"] = new_tts_device(project)
             run = ProductionRun(project_id=project_id, idempotency_key=request.idempotency_key,
-                snapshot=snapshot, consent=request.model_dump(), status='running', stage='speech',
+                snapshot=snapshot, consent={**request.model_dump(), 'parallel_host_ids': parallel},
+                status='running', stage='speech',
                 checkpoint={'jobs': {}, 'media': {}, 'duration_accepted': False})
             session.add(run)
             session.commit()
@@ -178,13 +221,14 @@ class ProductionRuns:
             if run.status == 'keyframe_review':
                 raise ValueError('Duyệt toàn bộ ảnh riêng trước khi đổi trạng thái lượt sản xuất.')
             checkpoint = deepcopy(run.checkpoint)
-            job = session.get(Job, checkpoint.get('current_job_id')) if checkpoint.get('current_job_id') else None
+            live = [j for j in (session.get(Job, id) for id in active_ids(checkpoint)) if j]
             if action == 'pause':
-                run.status = 'pause_requested' if job and job.status == 'running' else 'paused'
-                if job and job.status == 'queued':
-                    job.status = 'paused'
-                if job and job.kind in {'clip', 'rife'} and job.status == 'running':
-                    job.result = {**job.result, 'pause_requested': True}
+                run.status = 'pause_requested' if any(j.status == 'running' for j in live) else 'paused'
+                for job in live:
+                    if job.status == 'queued':
+                        job.status = 'paused'
+                    if job.kind in {'clip', 'rife'} and job.status == 'running':
+                        job.result = {**job.result, 'pause_requested': True}
             elif action == 'accept-duration':
                 if run.status != 'duration_review':
                     raise ValueError('Chưa có thời lượng đo cần xác nhận.')
@@ -195,24 +239,35 @@ class ProductionRuns:
                     raise ValueError('Duyệt toàn bộ ảnh riêng trước khi tiếp tục Wan.')
                 if run.status == 'duration_review':
                     raise ValueError('Chấp nhận thời lượng đo hoặc sửa lời đọc trước.')
+                from ghm.models import Host
                 # Pod migration: rebind live project GPU onto frozen snapshot/job so
                 # resume can continue after the old host was deleted/replaced.
                 live_host = self.service.project(run.project_id).get('host_id')
-                if live_host and live_host != run.snapshot.get('host_id'):
+                old_host = run.snapshot.get('host_id')
+                migrated = bool(live_host and live_host != old_host)
+                if migrated:
                     snap = deepcopy(run.snapshot)
                     snap['host_id'] = live_host
                     run.snapshot = snap
-                    if job and job.host_id:
+                # A deleted parallel Pod is dropped; its unfinished scene moves to the main Pod.
+                kept = [h for h in parallel_hosts(run) if session.get(Host, h) is not None and h != live_host]
+                if kept != parallel_hosts(run):
+                    run.consent = {**run.consent, 'parallel_host_ids': kept}
+                for job in live:
+                    gone = bool(job.host_id) and session.get(Host, job.host_id) is None
+                    if live_host and job.host_id and ((migrated and job.host_id == old_host) or gone):
                         job_snap = deepcopy(job.snapshot)
                         project_snap = dict(job_snap.get('project') or {})
                         project_snap['host_id'] = live_host
                         job_snap['project'] = project_snap
                         job.snapshot = job_snap
                         job.host_id = live_host
-                elif job and live_host and not job.host_id and job.kind not in {'export'} and not (
-                        job.kind in {'clip', 'rife'} and job.snapshot.get('scene', {}).get('motion', 'wan') != 'wan'):
-                    job.host_id = live_host
-                if job and job.status in {'paused', 'interrupted', 'reconciling', 'failed', 'cancelled'}:
+                    elif not migrated and live_host and not job.host_id and job.kind not in {'export'} and not (
+                            job.kind in {'clip', 'rife'} and job.snapshot.get('scene', {}).get('motion', 'wan') != 'wan'):
+                        job.host_id = live_host
+                for job in live:
+                    if job.status not in {'paused', 'interrupted', 'reconciling', 'failed', 'cancelled'}:
+                        continue
                     if job.status == 'failed':
                         retries = job.result.get('production_retry_count', 0)
                         if retries >= 3:
@@ -264,10 +319,12 @@ class ProductionRuns:
                 with self.service.sessions() as session:
                     session.execute(text('BEGIN IMMEDIATE'))
                     run = session.get(ProductionRun, id)
-                    if run.status == 'abandoned':
+                    if run is None or run.status == 'abandoned':
                         continue
                     run.status, run.error = 'failed', str(exc)[:2000]
                     session.commit()
+            except Exception:  # transient (e.g. DB lock): log, keep run state, retry next tick
+                logging.getLogger(__name__).exception('Production run %s advance failed', id)
 
     def valid_output(self, kind, output):
         ids = output.get('clip_ids', []) if kind == 'clip' else output.get('rife_clip_ids', []) if kind == 'rife' else output.get('artifact_ids', []) if kind == 'export' else [output.get('speech_id' if kind == 'speech' else 'keyframe_id')]
@@ -282,14 +339,13 @@ class ProductionRuns:
             if run.status not in {'running', 'pause_requested'}:
                 return
             cp = deepcopy(run.checkpoint)
-            current = session.get(Job, cp.get('current_job_id')) if cp.get('current_job_id') else None
-            if current:
+            remaining = []
+            for current in (session.get(Job, id) for id in active_ids(cp)):
+                if current is None:
+                    continue
                 if current.status != 'completed':
-                    if current.status in {'failed', 'cancelled', 'reconciling', 'interrupted', 'paused'}:
-                        run.status = 'paused' if current.status == 'paused' else 'reconciling' if current.status in {'reconciling', 'interrupted'} else 'failed'
-                        run.error = current.error
-                    session.commit()
-                    return
+                    remaining.append(current)
+                    continue
                 output = current.result if current.kind == 'export' else current.result.get('production_output', {})
                 if not self.valid_output(current.kind, output):
                     raise ValueError('Checkpoint thiếu file hoặc checksum không hợp lệ; không tự chạy lại GPU.')
@@ -302,16 +358,28 @@ class ProductionRuns:
                 else:
                     cp['artifact_ids'] = output['artifact_ids']
                     run.status, run.stage = 'completed', 'completed'
-                cp.pop('current_job_id', None)
-            if run.status == 'pause_requested':
+            set_active(cp, [j.id for j in remaining])
+            working = [j for j in remaining if j.status in {'queued', 'running', 'cancelling'}]
+            stuck = [j for j in remaining if j.status in {'failed', 'cancelled', 'reconciling', 'interrupted', 'paused'}]
+            if stuck and not working and run.status in {'running', 'pause_requested'}:
+                statuses = {j.status for j in stuck}
+                run.status = ('reconciling' if statuses & {'reconciling', 'interrupted'} else
+                              'failed' if statuses & {'failed', 'cancelled'} else 'paused')
+                run.error = next((j.error for j in stuck if j.error), None)
+            if run.status == 'pause_requested' and not working:
                 run.status = 'paused'
-            if run.status != 'running':
+            if run.status != 'running' or len(working) != len(remaining):
+                # Paused/failed/uncertain work stops new dispatch; Pods still rendering finish first.
                 run.checkpoint = cp
                 session.commit()
                 return
             project = deepcopy(run.snapshot)
             for scene in project['scenes']:
                 scene.update(cp['media'].get(scene['id'], {}))
+            from ghm.models import Host
+            hosts = [project.get('host_id'), *(h for h in parallel_hosts(run) if session.get(Host, h) is not None)]
+            used = {j.host_id for j in remaining}
+            dispatched = [j.id for j in remaining]
             stages = ('speech', 'keyframe', 'clip', 'rife', 'export') if project.get('frame_interpolation') == 'rife24' else ('speech', 'keyframe', 'clip', 'export')
             for kind in stages:
                 run.stage = kind
@@ -325,11 +393,21 @@ class ProductionRuns:
                         run.status, run.stage = 'duration_review', 'duration_review'
                         break
                 scenes = [None] if kind == 'export' else project['scenes']
-                pending = False
+                # Only Wan clips fan out across Pods; every other stage stays one job at a time.
+                pending = any(j.kind == kind for j in remaining)
                 for scene in scenes:
                     key = kind + ':' + (scene['id'] if scene else 'film')
                     if key in cp['jobs']:
                         continue
+                    local_clip = kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan'
+                    if kind != 'clip' and dispatched:
+                        pending = True
+                        break
+                    if kind == 'clip':
+                        lane = None if local_clip else next((h for h in hosts if h not in used), False)
+                        if lane is False or (local_clip and None in used):
+                            pending = True
+                            continue
                     if kind == 'clip':
                         self.service.artifact_path(scene['keyframe_id'])
                     if kind == 'export':
@@ -341,11 +419,15 @@ class ProductionRuns:
                                 raise ValueError('Clip chưa đủ thời lượng lời đọc; không kéo chậm/lặp clip.')
                     workflows = {name: canonical_hash(load_graph(name)) for name in ('qwen_image', 'qwen_edit', 'wan_i2v', 'rife_post')}
                     workflow = {} if kind in {'speech', 'export'} or (kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan') else ({'wan_i2v': workflows['wan_i2v']} if kind == 'clip' else {'rife_post': workflows['rife_post']} if kind == 'rife' else {k: v for k, v in workflows.items() if k in {'qwen_image', 'qwen_edit'}})
-                    clip_host = None if kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan' else project.get('host_id')
-                    hashed = canonical_hash({'production_version': 1, 'kind': kind, 'project_id': run.project_id,
-                        'scene_id': scene['id'] if scene else None, 'host': clip_host if kind != 'export' else None,
-                        'inputs': dependency_identity(project, scene, kind), 'workflow': workflow})
-                    existing = session.scalar(select(Job).where(Job.input_hash == hashed, Job.status == 'completed').order_by(Job.created_at.desc()))
+                    clip_host = None if local_clip else lane if kind == 'clip' else project.get('host_id')
+                    identity = {'production_version': 1, 'kind': kind, 'project_id': run.project_id,
+                        'scene_id': scene['id'] if scene else None,
+                        'inputs': dependency_identity(project, scene, kind), 'workflow': workflow}
+                    hashed = canonical_hash({**identity, 'host': clip_host if kind != 'export' else None})
+                    # A clip already finished on any Pod of this run is reused, not re-rendered.
+                    candidates = [hashed, *(canonical_hash({**identity, 'host': h}) for h in hosts
+                                            if kind == 'clip' and not local_clip and h != clip_host)]
+                    existing = session.scalar(select(Job).where(Job.input_hash.in_(candidates), Job.status == 'completed').order_by(Job.created_at.desc()))
                     from studio.generation import clip_output_matches
                     if existing and kind == 'clip' and not clip_output_matches(existing, project, scene):
                         existing = None
@@ -382,10 +464,14 @@ class ProductionRuns:
                         if kind == 'clip' and cp.get('pending_clip_config'):
                             self.jobs.set_pending_clip_config(job, cp['pending_clip_config'])
                     cp['jobs'][key] = job.id
-                    cp['current_job_id'] = job.id
+                    dispatched.append(job.id)
                     pending = True
-                    break
+                    if job.status != 'completed':
+                        used.add(job.host_id)
+                    if kind != 'clip':
+                        break
                 if pending:
                     break
+            set_active(cp, dispatched)
             run.checkpoint = cp
             session.commit()

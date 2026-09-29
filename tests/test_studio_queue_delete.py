@@ -110,7 +110,7 @@ def test_abandon_rejects_live_or_resolved_jobs(local, status):
 def test_abandon_rejects_local_worker(local):
     _, _, jobs, _, _ = local
     id = add_job(local, 'reconciling', {'speech_pending': True})
-    jobs.current = (id, object())
+    jobs.active[id] = object()
     with pytest.raises(ValueError):
         jobs.abandon(id, confirmed=True, remote_state_unknown=True)
 

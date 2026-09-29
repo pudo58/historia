@@ -90,7 +90,8 @@ def router(service, jobs, host_lock):
         with service.sessions() as session:
             rows = list(session.scalars(select(Job).where(Job.host_id == host_id)))
             runs = [run for run in session.scalars(select(ProductionRun))
-                    if run.snapshot.get('host_id') == host_id]
+                    if run.snapshot.get('host_id') == host_id or
+                    host_id in ((run.consent or {}).get('parallel_host_ids') or [])]
         def unresolved(result):
             return bool(result.get('maintenance_pending') or result.get('speech_pending') or
                 result.get('outline_pending') or result.get('chapter_pending') is not None or

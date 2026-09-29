@@ -206,6 +206,8 @@ class ProductionRunInput(StrictModel):
     script_approved: bool = False
     gpu_consent: bool = False
     unsourced_consent: bool = False
+    # Extra verified Pods that render Wan clips of different scenes at the same time.
+    parallel_host_ids: list[str] = Field(default_factory=list, max_length=7)
 
 
 class ProductionInput(StrictModel):

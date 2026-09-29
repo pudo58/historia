@@ -142,6 +142,23 @@ If any scene lacks audio, film estimates stay unknown. These are extrapolations,
 measurements of a complete film. Benchmark multiple representative scenes if their
 configurations differ. Claim 2× only after measured wall-time improvement and visual review.
 
+## Parallel Pods for Wan clips
+
+A production run may name extra Pods (`parallel_host_ids` in
+`POST /api/studio/projects/{id}/production-runs`, or the checkboxes under the consent panel).
+Only the clip stage fans out: each Pod renders a different Wan scene at the same time; speech,
+keyframes, RIFE and export stay on the main Pod/local machine. Ken Burns/still scenes render
+locally beside the Pods. Each extra Pod must have a pinned fingerprint and a proven Wan
+installation; it is billed separately. Wall time for clips drops roughly by the number of Pods;
+total GPU-seconds stay about the same.
+
+The local worker runs one job per host at a time (plus one local lane), so jobs on different
+Pods no longer wait for each other. A failed/uncertain clip stops new dispatch; clips already
+rendering on other Pods finish first, then the run shows failed/reconciling. Pause waits for
+every Pod to reach a shot boundary; resume re-queues every stopped clip. Deleting an extra Pod
+drops it from the run and resume moves its unfinished scene to the main Pod. A clip finished on
+any Pod of the run is reused. `GET /performance` adds `parallel_gpus` and `wall_eta_seconds`.
+
 ## Local verification
 
 Use `.venv/Scripts/python.exe -m pytest -q` on Windows and run frontend build/lint.

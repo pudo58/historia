@@ -1,6 +1,7 @@
 """Durable local queue with conservative recovery of remotely submitted inference."""
 import asyncio
 import json
+import logging
 import time
 from contextlib import AsyncExitStack, nullcontext
 from datetime import UTC, datetime
@@ -28,7 +29,8 @@ class StudioJobs:
         self.service, self.hosts, self.recipes = service, hosts, recipes
         self.backend = backend or RemoteBackend(hosts, service)
         self.worker = None
-        self.current = None
+        # job_id -> asyncio.Task. At most one running job per GPU host (and one local lane).
+        self.active = {}
         self.closing = False
         from studio.installations import Installations
         self.installations = Installations(self)
@@ -72,7 +74,7 @@ class StudioJobs:
             children = [j for j in session.scalars(select(Job).where(Job.project_id == job.project_id))
                         if j.id == job.id or (run_id and j.snapshot.get('production_run_id') == run_id)]
             if any(j.status in {'running', 'cancelling'} or
-                   (self.current and self.current[0] == j.id) for j in children):
+                   j.id in self.active for j in children):
                 raise ValueError('Còn worker local đang giữ lượt; chờ worker dừng trước khi bỏ lượt.')
             for child in children:
                 if child.id == job.id or child.status in {'queued', 'paused', 'reconciling', 'interrupted', 'failed'}:
@@ -163,12 +165,15 @@ class StudioJobs:
 
     async def close(self):
         self.closing = True
-        if self.current and self.service.require(Job, self.current[0]).kind == "export":
-            # Do not detach an FFmpeg thread on graceful shutdown.
-            await asyncio.gather(asyncio.shield(self.current[1]), return_exceptions=True)
         if self.worker:
             self.worker.cancel()
             await asyncio.gather(self.worker, return_exceptions=True)
+        tasks = dict(self.active)
+        for job_id, task in tasks.items():
+            # Do not detach an FFmpeg thread on graceful shutdown.
+            if self.service.require(Job, job_id).kind != 'export':
+                task.cancel()
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     def event(self, job_id, message, *, level='info', stage=None):
         with self.service.sessions() as session:
@@ -238,26 +243,29 @@ class StudioJobs:
         from studio.models import ProductionRun
         with self.service.sessions() as session:
             session.execute(text('BEGIN IMMEDIATE'))
+            targets = [job_id]
             if run_id:
+                from studio.production import active_ids
                 run = session.get(ProductionRun, run_id)
                 if not run:
                     raise KeyError(run_id)
                 if run.status != 'paused':
                     raise ValueError('Tạm dừng lượt sản xuất tại ranh giới shot trước khi đổi cấu hình.')
-                job_id = run.checkpoint.get('current_job_id')
-            job = session.get(Job, job_id) if job_id else None
-            if job and self.current and self.current[0] == job.id:
-                raise ValueError('Worker đang kết thúc shot; đợi checkpoint an toàn.')
-            if job and (not run_id or job.status != 'completed'):
-                if job.kind != 'clip' or job.status != 'paused':
-                    raise ValueError('Chỉ đổi clip đã tạm dừng tại ranh giới shot.')
-                if job.snapshot.get('production_run_id') and not run_id:
-                    raise ValueError('Đổi cấu hình qua lượt sản xuất đang giữ job này.')
-                if any(v.get('state') != 'downloaded' for v in job.result.get('submissions', {}).values()):
-                    raise ValueError('Đối chiếu tất cả prompt đã gửi trước khi đổi cấu hình.')
-                self.set_pending_clip_config(job, config)
-            elif not run_id:
-                raise KeyError(job_id)
+                targets = active_ids(run.checkpoint) or [None]
+            for target in targets:
+                job = session.get(Job, target) if target else None
+                if job and job.id in self.active:
+                    raise ValueError('Worker đang kết thúc shot; đợi checkpoint an toàn.')
+                if job and (not run_id or job.status != 'completed'):
+                    if job.kind != 'clip' or job.status != 'paused':
+                        raise ValueError('Chỉ đổi clip đã tạm dừng tại ranh giới shot.')
+                    if job.snapshot.get('production_run_id') and not run_id:
+                        raise ValueError('Đổi cấu hình qua lượt sản xuất đang giữ job này.')
+                    if any(v.get('state') != 'downloaded' for v in job.result.get('submissions', {}).values()):
+                        raise ValueError('Đối chiếu tất cả prompt đã gửi trước khi đổi cấu hình.')
+                    self.set_pending_clip_config(job, config)
+                elif not run_id:
+                    raise KeyError(target)
             if run_id:
                 run.checkpoint = {**run.checkpoint, 'pending_clip_config': config,
                                   'clip_config_version': run.checkpoint.get('clip_config_version', 0) + 1}
@@ -275,7 +283,7 @@ class StudioJobs:
                     job.snapshot.get('scene', {}).get('image_strategy') != 'chain_last' or
                     job.result.get('chain_pending_index') != index or
                     job.result.get('chain_frames', {}).get(str(index)) != artifact_id or
-                    (self.current and self.current[0] == job_id)):
+                    job_id in self.active):
                 raise ValueError('Ảnh nối không thuộc shot đang chờ duyệt.')
             self.service.artifact_path(artifact_id)
             approved = set(job.result.get('chain_approved', []))
@@ -576,9 +584,10 @@ class StudioJobs:
                     raise ValueError('LLM/TTS remote chưa có xác nhận dừng; cần đối chiếu thủ công.')
                 if job.result.get("submissions"):
                     await self.backend.cancel(job)
-                if self.current and self.current[0] == job_id:
-                    self.current[1].cancel()
-                    await asyncio.gather(self.current[1], return_exceptions=True)
+                task = self.active.get(job_id)
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
                 self.patch(job_id, status="interrupted" if job.kind == 'install' else "cancelled")
                 if job.kind in {'install', 'verify'}:
                     self.installations.patch(job.host_id, 'interrupted')
@@ -605,51 +614,72 @@ class StudioJobs:
         return self.service.read(self.service.require(Job, job_id))
 
     async def loop(self):
+        """Dispatch queued jobs concurrently: one lane per GPU host plus one local lane.
+
+        Jobs on the same host stay strictly serial (ComfyUI queue, remote locks and
+        reconciliation all assume that); different Pods render at the same time.
+        """
         while True:
-            self.runs.tick()
-            with self.service.sessions() as session:
-                jobs = list(session.scalars(select(Job).where(Job.status == "queued").order_by(Job.created_at)))
-                blocked = {j.host_id for j in session.scalars(select(Job).where(
-                    Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned'])))
-                    if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result)}
-            job = next((j for j in jobs if j.host_id not in blocked or
-                        (j.kind == 'runtime' and self.runtime.at_boundary(j.host_id, j.id, recover=j.snapshot.get('action') == 'recover'))), None)
-            if job is None:
-                await asyncio.sleep(.5)
-                continue
-            self.patch(job.id, status="running", error=None)
-            task = asyncio.create_task(self.execute(job))
-            self.current = (job.id, task)
             try:
-                await task
-                self.patch(job.id, status="completed", progress=100)
-            except PauseAtBoundary:
-                self.patch(job.id, status='paused')
-            except asyncio.CancelledError:
-                state = self.service.require(Job, job.id)
-                if self.closing or state.status != "cancelling":
-                    self.patch(job.id, status="reconciling" if self.remote_pending(state.result) else "interrupted")
-                    if job.kind in {'install', 'verify'}:
-                        self.installations.patch(job.host_id, 'interrupted')
-                    raise
-            except ReconcileRequired as exc:
-                message = str(exc) if job.kind in {'speech', 'image_review'} else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
-                self.patch(job.id, status="reconciling", error=message)
+                self.runs.tick()
+            except Exception:  # a bad production tick must not kill the durable worker
+                logging.getLogger(__name__).exception('Production tick failed; worker continues.')
+                await asyncio.sleep(2)
+            started = self.dispatch()
+            await asyncio.sleep(.1 if started else .5)
+
+    def dispatch(self):
+        with self.service.sessions() as session:
+            jobs = list(session.scalars(select(Job).where(Job.status == "queued").order_by(Job.created_at)))
+            blocked = {j.host_id for j in session.scalars(select(Job).where(
+                Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned'])))
+                if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result)}
+        with self.service.sessions() as session:
+            busy = {session.get(Job, id).host_id for id in self.active if session.get(Job, id)}
+        started = 0
+        for job in jobs:
+            if job.host_id in busy:
+                continue
+            if job.host_id in blocked and not (job.kind == 'runtime' and self.runtime.at_boundary(
+                    job.host_id, job.id, recover=job.snapshot.get('action') == 'recover')):
+                continue
+            busy.add(job.host_id)
+            self.patch(job.id, status="running", error=None)
+            self.active[job.id] = asyncio.create_task(self._run(job))
+            started += 1
+        return started
+
+    async def _run(self, job):
+        try:
+            await self.execute(job)
+            self.patch(job.id, status="completed", progress=100)
+        except PauseAtBoundary:
+            self.patch(job.id, status='paused')
+        except asyncio.CancelledError:
+            state = self.service.require(Job, job.id)
+            if self.closing or state.status != "cancelling":
+                self.patch(job.id, status="reconciling" if self.remote_pending(state.result) else "interrupted")
                 if job.kind in {'install', 'verify'}:
                     self.installations.patch(job.host_id, 'interrupted')
-            except (httpx.TransportError, asyncssh.Error, ConnectionError, TimeoutError):
-                message = "Mất liên lạc khi tạo giọng đọc. Bấm Đối chiếu để kiểm tra file hoặc tiến trình còn trên GPU; không tạo lượt mới." if job.kind == "speech" else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
-                self.patch(job.id, status="reconciling", error=message)
-                if job.kind in {'install', 'verify'}:
-                    self.installations.patch(job.host_id, 'interrupted')
-            except Exception as exc:  # noqa: BLE001 -- one failed job must not kill the durable worker
-                message = str(exc) if isinstance(exc, ValueError) else "Tác vụ thất bại. Kiểm tra dịch vụ GPU, model và dung lượng ổ."
-                pending = self.remote_pending(self.service.require(Job, job.id).result)
-                self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review'} else "failed", error=message[:2000])
-                if job.kind in {'install', 'verify'}:
-                    self.installations.patch(job.host_id, 'install_failed' if job.kind == 'install' else 'verify_failed')
-            finally:
-                self.current = None
+                raise
+        except ReconcileRequired as exc:
+            message = str(exc) if job.kind in {'speech', 'image_review'} else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
+            self.patch(job.id, status="reconciling", error=message)
+            if job.kind in {'install', 'verify'}:
+                self.installations.patch(job.host_id, 'interrupted')
+        except (httpx.TransportError, asyncssh.Error, ConnectionError, TimeoutError):
+            message = "Mất liên lạc khi tạo giọng đọc. Bấm Đối chiếu để kiểm tra file hoặc tiến trình còn trên GPU; không tạo lượt mới." if job.kind == "speech" else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
+            self.patch(job.id, status="reconciling", error=message)
+            if job.kind in {'install', 'verify'}:
+                self.installations.patch(job.host_id, 'interrupted')
+        except Exception as exc:  # noqa: BLE001 -- one failed job must not kill the durable worker
+            message = str(exc) if isinstance(exc, ValueError) else "Tác vụ thất bại. Kiểm tra dịch vụ GPU, model và dung lượng ổ."
+            pending = self.remote_pending(self.service.require(Job, job.id).result)
+            self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review'} else "failed", error=message[:2000])
+            if job.kind in {'install', 'verify'}:
+                self.installations.patch(job.host_id, 'install_failed' if job.kind == 'install' else 'verify_failed')
+        finally:
+            self.active.pop(job.id, None)
 
     def _finish_speech(self, job, path):
         duration = probe(path)["duration"]

@@ -100,6 +100,12 @@ def performance(jobs, project_id, run_id=None):
         result = estimate(records, pending, project.get('hourly_usd'))
         if any(s['shot_count'] is None for s in scenes):
             result['eta_seconds'] = result['estimated_remaining_usd'] = None
+        # Wall-clock estimate when several Pods render different scenes at once. Processing
+        # cost is unchanged (same GPU-seconds); each extra Pod is billed for its own rental.
+        from studio.production import parallel_hosts
+        gpus = 1 + (len(parallel_hosts(run)) if run else 0)
+        result['parallel_gpus'] = gpus
+        result['wall_eta_seconds'] = result['eta_seconds'] / gpus if result['eta_seconds'] is not None else None
         return {**result, 'run_id': run.id if run else None, 'scenes': scenes,
                 'measured_audio_seconds': measured, 'shots': records,
                 'unmeasured_scenes': sum(s['shot_count'] is None for s in scenes)}
