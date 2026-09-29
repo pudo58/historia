@@ -39,7 +39,26 @@ def install_failure(result):
         return 'Kết nối tới kho package bị gián đoạn.'
     if result.rc == 44:
         return 'Môi trường đã có dữ liệu không thuộc Studio; không ghi đè.'
-    return f'Lệnh cài trả mã lỗi {result.rc}. Không lưu log thô có thể chứa token.'
+    if 'ensurepip is not available' in text or 'ensurepip' in text and 'venv' in text:
+        return 'Python trên Pod thiếu ensurepip/venv (cần gói python3-venv khớp phiên bản python3).'
+    if 'permission denied' in text or 'read-only file system' in text:
+        return 'Không có quyền ghi vào thư mục cài (quyền hoặc ổ chỉ đọc).'
+    tail = redacted_tail(result.stdout + '\n' + result.stderr)
+    return f'Lệnh cài trả mã lỗi {result.rc}.' + (f' Cuối log (đã ẩn token/URL): {tail}' if tail else '')
+
+
+def redacted_tail(text: str, lines: int = 6, limit: int = 700) -> str:
+    """Last few output lines with anything secret-shaped removed."""
+    kept = []
+    for line in text.replace('\r', '\n').splitlines():
+        line = line.strip()
+        if not line or 'downloaded bytes' in line.lower():
+            continue
+        line = re.sub(r'hf_[A-Za-z0-9]{8,}', 'hf_***', line)
+        line = re.sub(r'(?i)(bearer|token|authorization|api[_-]?key|password)([=: ]+)\S+', r'\1\2***', line)
+        line = re.sub(r'https?://\S+', '<url>', line)
+        kept.append(line[:240])
+    return ' | '.join(kept[-lines:])[-limit:]
 
 # "24 GB" cards report slightly less through nvidia-smi (RTX 4090 ≈23.99, RTX PRO 4000 Blackwell ≈23.89 GiB).
 MIN_VRAM_GIB = 23.5
@@ -135,11 +154,15 @@ async def install(hosts, job, lock: dict, log) -> dict:
             raise ValueError(stage + ': ' + install_failure(result) + ' Các tệp cũ được giữ nguyên.')
         return result
 
-    async def create_environment(directory):
+    async def create_environment(directory, stage='Tạo môi trường Python'):
         # Adopt mode must not quietly overwrite an unrelated pre-existing venv.
         marker = directory + '/.studio-env-owned'
         await command(f"if [ -d {q(directory)} ] && [ -n \"$(ls -A {q(directory)})\" ] && [ ! -f {q(marker)} ]; then exit 44; fi; "
-                      f"mkdir -p {q(directory)} && touch {q(marker)} && python3 -m venv {q(directory)}")
+                      f"mkdir -p {q(directory)} && touch {q(marker)} && "
+                      f"{{ python3 -m venv {q(directory)} || {{ echo 'venv with pip failed; retrying without ensurepip'; "
+                      f"python3 -m venv --clear --without-pip {q(directory)} && touch {q(marker)} && "
+                      f"curl -fsSL https://bootstrap.pypa.io/get-pip.py | {q(directory + '/bin/python')} - --no-warn-script-location; }}; }} && "
+                      f"{q(directory + '/bin/python')} -m pip --version", stage=stage + ' ' + directory.rsplit('/', 1)[-1])
     try:
         await check_remote_model_access(executor, lock, hosts.setting('hf_token'))
         log('Đã kiểm tra quyền tải HEAD từ Pod; chưa cài hoặc tải model.')

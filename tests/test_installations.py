@@ -522,3 +522,12 @@ def test_actual_installer_orchestrates_isolated_environments(install_app, monkey
 def test_24gb_cards_reported_below_24_gib_are_accepted():
     from studio.installer import MIN_VRAM_GIB
     assert 23.89 >= MIN_VRAM_GIB and 23.99 >= MIN_VRAM_GIB and 16 < MIN_VRAM_GIB
+
+
+def test_install_failure_shows_redacted_tail():
+    from ghm.executors.base import CommandResult
+    from studio.installer import install_failure
+    out = 'Collecting x\nfrom https://hf.co/x?sig=abc token=hf_ABCDEFGHIJKL\nError: something broke badly\n'
+    msg = install_failure(CommandResult(1, out, ''))
+    assert 'something broke badly' in msg and 'hf_ABCDEFGHIJKL' not in msg and 'sig=abc' not in msg
+    assert 'ensurepip' in install_failure(CommandResult(1, 'Error: ensurepip is not available', ''))
