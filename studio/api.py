@@ -119,7 +119,7 @@ def router(service, jobs, host_lock):
             return {'state': 'unknown', 'reason': 'Chưa có mốc hoạt động để xác nhận 10 phút nhàn rỗi.'}
         seconds = max(0, (datetime.now(UTC) - max(timestamps)).total_seconds())
         hourly = project.get('hourly_usd')
-        return {'state': 'idle' if seconds >= 600 else 'recent', 'idle_seconds': seconds,
+        return {'state': 'idle' if seconds >= 600 else 'recent', 'idle_seconds': seconds, 'host_id': host_id,
                 'hourly_usd': hourly, 'next_ten_minutes_usd': hourly / 6 if hourly is not None else None,
                 'reason': 'ComfyUI rỗng và Historia không còn job/prompt cần đối chiếu.'}
 

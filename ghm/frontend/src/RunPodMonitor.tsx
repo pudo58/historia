@@ -1,21 +1,25 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-type Pod={id:string;name:string|null;status:string;gpu:string|null;gpu_count:number|null;vcpu:number|null;memory_gb:number|null;cost_per_hr:number|null;uptime_seconds:number|null;session_cost:number|null;host_label:string|null};
-type Data={configured:boolean;error?:string;pods:Pod[];running_count?:number;running_cost_per_hr?:number};
-const money=(v:number|null|undefined)=>v==null?'—':`$${v.toFixed(v<1?3:2)}`;
-const uptime=(s:number|null)=>s==null?'—':`${Math.floor(s/3600)}g ${Math.floor(s%3600/60)}p`;
+export type Pod={id:string;name:string|null;status:string;gpu:string|null;gpu_count:number|null;vcpu:number|null;memory_gb:number|null;cost_per_hr:number|null;uptime_seconds:number|null;session_cost:number|null;host_label:string|null;host_id:string|null};
+export type RunPodData={configured:boolean;error?:string;pods:Pod[];running_count?:number;running_cost_per_hr?:number};
+export const money=(v:number|null|undefined)=>v==null?'—':`$${v.toFixed(v<1?3:2)}`;
+export const uptime=(s:number|null)=>s==null?'—':`${Math.floor(s/3600)}g ${Math.floor(s%3600/60)}p`;
+
+export function useRunPod() {
+  return useQuery({queryKey:['runpod-pods'], refetchInterval:30000, queryFn:async()=>{
+    const response=await fetch('/api/runpod/pods');
+    if(!response.ok) throw new Error('Không đọc được dữ liệu RunPod.');
+    return response.json() as Promise<RunPodData>;
+  }});
+}
 
 export default function RunPodMonitor() {
   const client = useQueryClient();
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const query = useQuery({queryKey:['runpod-pods'], refetchInterval:30000, queryFn:async()=>{
-    const response=await fetch('/api/runpod/pods');
-    if(!response.ok) throw new Error('Không đọc được dữ liệu RunPod.');
-    return response.json() as Promise<Data>;
-  }});
+  const query = useRunPod();
   const data=query.data;
   const save=async(value:string)=>{
     setBusy(true); setMessage('');

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import HuggingFaceToken from './HuggingFaceToken';
 import RuntimePanel from './RuntimePanel';
 import { JobEvents } from './StudioControls';
+import { navigate } from './workspace';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 type Host = {id:string; label:string; address:string; port:number; username:string; pinned_fingerprint?:string; gpu?:{name:string;vram_gb:number}};
@@ -41,7 +42,7 @@ export default function InstallPanel(){
   const host=hosts.data?.find(h=>h.id===selected);
   return <><div className="page-heading"><div><p className="eyebrow">THIẾT LẬP MỘT LẦN</p><h1>Cài bộ Video lịch sử</h1><p>Chọn GPU → xem trước → xác nhận cài → tạo output kiểm chứng.</p></div></div>
     <div className="alert warning">Dừng cài, render hoặc đóng web KHÔNG dừng tiền thuê GPU. Bộ cài đang ở giai đoạn nghiệm thu; không tự hạ chất lượng hoặc sửa driver.</div>
-    <section className="panel"><label className="field"><span>Máy GPU cần cài</span><select value={selected} onChange={e=>setId(e.target.value)}><option value="">Chọn máy…</option>{hosts.data?.map(h=><option value={h.id} key={h.id}>{h.label} · {h.gpu?.name || h.address}</option>)}</select></label>{hosts.error && <ErrorDetail message={hosts.error.message}/>}{!hosts.data?.length && <p>Thêm SSH và xác nhận fingerprint trong mục Kết nối GPU trước.</p>}</section>
+    <section className="panel"><label className="field"><span>Máy GPU cần cài</span><select value={selected} onChange={e=>setId(e.target.value)}><option value="">Chọn máy…</option>{hosts.data?.map(h=><option value={h.id} key={h.id}>{h.label} · {h.gpu?.name || h.address}</option>)}</select></label>{hosts.error && <ErrorDetail message={hosts.error.message}/>}{!hosts.data?.length && <p>Thêm SSH và xác nhận fingerprint trong mục Kết nối GPU trước. <button type="button" className="primary" onClick={()=>navigate({page:'gpu'})}>Đi tới Kết nối GPU →</button></p>}</section>
     <HuggingFaceToken/>
     {host && <><HostInstall key={host.id} host={host}/><RuntimePanel key={`runtime-${host.id}`} hostId={host.id}/></>}
   </>;
