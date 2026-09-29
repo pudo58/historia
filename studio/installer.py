@@ -41,9 +41,13 @@ def install_failure(result):
         return 'Môi trường đã có dữ liệu không thuộc Studio; không ghi đè.'
     return f'Lệnh cài trả mã lỗi {result.rc}. Không lưu log thô có thể chứa token.'
 
+# "24 GB" cards report slightly less through nvidia-smi (RTX 4090 ≈23.99, RTX PRO 4000 Blackwell ≈23.89 GiB).
+MIN_VRAM_GIB = 23.5
+
 SNAPSHOT_SCRIPT = r"""
 import hashlib, json, os, pathlib, sys
 from huggingface_hub import hf_hub_download
+
 c = json.load(sys.stdin)
 for item in c["snapshots"]:
     destination = pathlib.Path(c["root"]) / "service-models" / item["repo"]
@@ -116,7 +120,7 @@ async def install(hosts, job, lock: dict, log) -> dict:
     driver = int(report.gpu.driver_version.split(".")[0])
     if driver < 570:
         raise ValueError("Bộ cài yêu cầu NVIDIA driver 570+ cho CUDA 12.8; Studio không tự sửa driver.")
-    if report.gpu.vram_gb < 24:
+    if report.gpu.vram_gb < MIN_VRAM_GIB:
         raise ValueError("Bộ nền này chưa hỗ trợ GPU dưới 24 GB. Không tự đổi sang model/chất lượng khác.")
     log('Đang kiểm tra quyền tải từng file model trên Hugging Face; chưa tải hoặc cài dependency.')
     await asyncio.to_thread(check_model_access, lock, hosts.setting('hf_token'))

@@ -92,8 +92,12 @@ class Installations:
         report = self.hosts.latest_preflight(host_id)
         if not report or report.status == 'fail' or not report.gpu:
             raise ValueError('Chạy kiểm tra máy thành công trước khi chuẩn bị cài.')
-        if report.gpu.vram_gb < 24 or int(report.gpu.driver_version.split('.')[0]) < 570:
-            raise ValueError('Bộ nền yêu cầu VRAM >=24 GiB, driver NVIDIA >=570. Không tự sửa driver/hạ chất lượng.')
+        from studio.installer import MIN_VRAM_GIB
+        driver = int(report.gpu.driver_version.split('.')[0])
+        if report.gpu.vram_gb < MIN_VRAM_GIB or driver < 570:
+            raise ValueError(f'Bộ nền cần GPU 24 GB (nvidia-smi ≥{MIN_VRAM_GIB} GiB) và driver NVIDIA ≥570; máy này có '
+                             f'{report.gpu.name} {report.gpu.vram_gb:g} GiB, driver {report.gpu.driver_version}. '
+                             'Không tự sửa driver/hạ chất lượng.')
         return host
 
     async def discover(self, host_id):

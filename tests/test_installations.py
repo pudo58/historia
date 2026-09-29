@@ -517,3 +517,8 @@ def test_actual_installer_orchestrates_isolated_environments(install_app, monkey
     assert any('/tts-venv' in c and 'python3 -m venv' in c for c in commands)
     assert any('torch==2.11.0' in c for c in commands)
     assert not any('kill ' in c or 'nvidia-driver' in c for c in commands)
+
+
+def test_24gb_cards_reported_below_24_gib_are_accepted():
+    from studio.installer import MIN_VRAM_GIB
+    assert 23.89 >= MIN_VRAM_GIB and 23.99 >= MIN_VRAM_GIB and 16 < MIN_VRAM_GIB
