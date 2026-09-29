@@ -39,8 +39,6 @@ def install_failure(result):
         return 'Kết nối tới kho package bị gián đoạn.'
     if result.rc == 44:
         return 'Môi trường đã có dữ liệu không thuộc Studio; không ghi đè.'
-    if 'ensurepip is not available' in text or 'ensurepip' in text and 'venv' in text:
-        return 'Python trên Pod thiếu ensurepip/venv (cần gói python3-venv khớp phiên bản python3).'
     if 'permission denied' in text or 'read-only file system' in text:
         return 'Không có quyền ghi vào thư mục cài (quyền hoặc ổ chỉ đọc).'
     tail = redacted_tail(result.stdout + '\n' + result.stderr)
@@ -157,12 +155,22 @@ async def install(hosts, job, lock: dict, log) -> dict:
     async def create_environment(directory, stage='Tạo môi trường Python'):
         # Adopt mode must not quietly overwrite an unrelated pre-existing venv.
         marker = directory + '/.studio-env-owned'
-        await command(f"if [ -d {q(directory)} ] && [ -n \"$(ls -A {q(directory)})\" ] && [ ! -f {q(marker)} ]; then exit 44; fi; "
-                      f"mkdir -p {q(directory)} && touch {q(marker)} && "
-                      f"{{ python3 -m venv {q(directory)} || {{ echo 'venv with pip failed; retrying without ensurepip'; "
-                      f"python3 -m venv --clear --without-pip {q(directory)} && touch {q(marker)} && "
-                      f"curl -fsSL https://bootstrap.pypa.io/get-pip.py | {q(directory + '/bin/python')} - --no-warn-script-location; }}; }} && "
-                      f"{q(directory + '/bin/python')} -m pip --version", stage=stage + ' ' + directory.rsplit('/', 1)[-1])
+        d, py = q(directory), q(directory + '/bin/python')
+        get_pip = ("import sys,urllib.request;exec(urllib.request.urlopen("
+                   "'https://bootstrap.pypa.io/get-pip.py',timeout=120).read())")
+        await command(
+            f"if [ -d {d} ] && [ -n \"$(ls -A {d})\" ] && [ ! -f {q(marker)} ]; then exit 44; fi; "
+            f"mkdir -p {d} && touch {q(marker)} && trap 'touch {marker}' EXIT && "
+            f"echo \"python3: $(command -v python3) $(python3 -V 2>&1)\"; "
+            f"if python3 -m venv --clear {d} && {py} -m pip --version; then :; else "
+            f"echo 'step 2: installing the versioned venv package'; "
+            f"V=$(python3 -c 'import sys;print(f\"{{sys.version_info[0]}}.{{sys.version_info[1]}}\")'); "
+            f"if command -v apt-get >/dev/null; then S=''; [ \"$(id -u)\" = 0 ] || S='sudo -n'; "
+            f"$S env DEBIAN_FRONTEND=noninteractive apt-get install -y python$V-venv python3-pip >/dev/null 2>&1 || true; fi; "
+            f"if python3 -m venv --clear {d} && {py} -m pip --version; then :; else "
+            f"echo 'step 3: bootstrap pip into a bare venv'; "
+            f"python3 -m venv --clear --without-pip {d} && {py} -c {q(get_pip)} --no-warn-script-location && {py} -m pip --version; fi; fi "
+            f"&& touch {q(marker)}", stage=stage + ' ' + directory.rsplit('/', 1)[-1])
     try:
         await check_remote_model_access(executor, lock, hosts.setting('hf_token'))
         log('Đã kiểm tra quyền tải HEAD từ Pod; chưa cài hoặc tải model.')
