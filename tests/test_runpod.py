@@ -60,3 +60,46 @@ def test_uptime_and_session_cost():
     pod = result['pods'][0]
     assert pod['uptime_seconds'] == 7200 and pod['session_cost'] == pytest.approx(3.0)
     assert result['pods'][1]['uptime_seconds'] is None and result['pods'][0]['host_id'] is None
+
+
+def _configure(client, monkeypatch, tmp_path, pods):
+    key = tmp_path / 'id_ed25519'
+    key.write_text('fake')
+
+    async def fake(_key):
+        return pods
+    monkeypatch.setattr(runpod, 'fetch_pods', fake)
+    client.post('/api/settings/runpod-key', json={'token': 'rpa_' + 'k' * 20})
+    return key
+
+
+def test_connect_creates_host_then_repoints_after_restart(client, monkeypatch, tmp_path):
+    fresh = {**POD, 'id': 'new1', 'name': 'wan-b', 'publicIp': '9.9.9.9', 'portMappings': {'22': 41000}}
+    key = _configure(client, monkeypatch, tmp_path, [fresh])
+    assert client.post('/api/runpod/pods/new1/connect').status_code == 409  # no SSH key chosen yet
+    assert client.post('/api/settings/runpod-ssh-key', json={'token': str(tmp_path / 'missing')}).status_code == 422
+    assert client.post('/api/settings/runpod-ssh-key', json={'token': str(key)}).status_code == 200
+    created = client.post('/api/runpod/pods/new1/connect').json()
+    assert created['action'] == 'created' and created['host']['address'] == '9.9.9.9' and created['host']['port'] == 41000
+    assert created['host']['pinned_fingerprint'] is None  # trust still needs the fingerprint step
+    assert client.post('/api/runpod/pods/new1/connect').json()['action'] == 'already_connected'
+    # Pod restarted with a new ip/port: the linked host is re-pointed instead of duplicated.
+    moved = {**fresh, 'publicIp': '8.8.8.8', 'portMappings': {'22': 42000}}
+
+    async def fake2(_key):
+        return [moved]
+    monkeypatch.setattr(runpod, 'fetch_pods', fake2)
+    listing = client.get('/api/runpod/pods').json()['pods'][0]
+    assert listing['host_id'] is None and listing['linked_host_id'] == created['host']['id']
+    updated = client.post('/api/runpod/pods/new1/connect').json()
+    assert updated['action'] == 'address_updated' and updated['host']['id'] == created['host']['id']
+    assert updated['host']['address'] == '8.8.8.8'
+    assert len(client.get('/api/hosts').json()) == 2  # fixture host + one Pod host
+
+
+def test_connect_rejects_pod_without_ssh(client, monkeypatch, tmp_path):
+    key = _configure(client, monkeypatch, tmp_path, [{**POD, 'id': 'nossh', 'portMappings': {}}, STOPPED])
+    client.post('/api/settings/runpod-ssh-key', json={'token': str(key)})
+    assert client.post('/api/runpod/pods/nossh/connect').status_code == 409
+    assert client.post('/api/runpod/pods/def/connect').status_code == 409
+    assert client.post('/api/runpod/pods/none/connect').status_code == 404

@@ -59,6 +59,7 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
             'session_cost': cost * seconds / 3600 if cost is not None and seconds is not None else None,
             'public_ip': ip, 'ssh_port': ssh_port,
             'host_id': host['id'] if host else None, 'host_label': host['label'] if host else None,
+            'ssh_ready': bool(running and ip and ssh_port),
         })
     running = [p for p in result if p['status'] == 'RUNNING']
     return {'pods': result, 'running_count': len(running),

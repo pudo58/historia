@@ -335,7 +335,61 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
         with sessions() as session:
             hosts = [{"id": h.id, "label": h.label, "address": h.address, "port": h.port}
                      for h in session.query(Host).all()]
-        return {"configured": True, **runpod.summarize(pods, hosts)}
+        summary = runpod.summarize(pods, hosts)
+        labels = {h["id"]: h["label"] for h in hosts}
+        for pod in summary["pods"]:
+            linked = service.setting(f"runpod_pod_host:{pod['id']}")
+            pod["linked_host_id"] = linked if linked in labels and not pod["host_id"] else None
+            pod["linked_host_label"] = labels.get(pod["linked_host_id"])
+        return {"configured": True, "ssh_key_path": service.setting("runpod_ssh_key_path") or "", **summary}
+
+    def normalize_key_path(raw: str) -> str:
+        path = os.path.abspath(os.path.expanduser(raw.strip()))
+        if not os.path.isfile(path):
+            raise HTTPException(422, "Không tìm thấy file khóa SSH riêng tại đường dẫn này (trên máy chạy Historia).")
+        return path
+
+    @app.post("/api/settings/runpod-ssh-key")
+    def save_runpod_ssh_key(payload: TokenUpdate):
+        path = normalize_key_path(payload.token) if payload.token.strip() else ""
+        service.save_setting("runpod_ssh_key_path", path)
+        return {"ssh_key_path": path}
+
+    @app.post("/api/runpod/pods/{pod_id}/connect")
+    async def connect_runpod_pod(pod_id: str):
+        """Create (or re-point) the Historia SSH host for a running Pod. Never trusts the host key by itself."""
+        key = service.setting("runpod_api_key")
+        key_path = service.setting("runpod_ssh_key_path")
+        if not key:
+            raise HTTPException(409, "Chưa nhập RunPod API key.")
+        if not key_path:
+            raise HTTPException(409, "Chưa chọn file khóa SSH riêng để đăng nhập Pod.")
+        try:
+            pods = await runpod.fetch_pods(key)
+        except runpod.RunPodError as error:
+            raise HTTPException(502, str(error)) from error
+        pod = next((p for p in runpod.summarize(pods, [])["pods"] if p["id"] == pod_id), None)
+        if pod is None:
+            raise HTTPException(404, "Không thấy Pod này trên RunPod.")
+        if not pod["ssh_ready"]:
+            raise HTTPException(409, "Pod chưa chạy hoặc chưa mở cổng SSH (22). Chờ Pod khởi động xong rồi thử lại.")
+        address, port = pod["public_ip"], int(pod["ssh_port"])
+        with sessions() as session:
+            existing = next((h.id for h in session.query(Host).all() if h.address == address and h.port == port), None)
+        if existing:
+            service.save_setting(f"runpod_pod_host:{pod_id}", existing)
+            return {"host": _to_read(service._require_host(existing), service), "action": "already_connected"}
+        linked = service.setting(f"runpod_pod_host:{pod_id}")
+        if linked and service.get_host(linked):
+            async with host_lock(linked):
+                runner.assert_idle(linked)
+                await tunnels.stop(linked)
+                host = service.update_host(linked, HostUpdate(address=address, port=port))
+            return {"host": _to_read(host, service), "action": "address_updated"}
+        host = service.create_host(HostCreate(label=pod["name"] or pod_id, address=address, port=port,
+                                              username="root", auth_kind="private_key", secret=key_path))
+        service.save_setting(f"runpod_pod_host:{pod_id}", host.id)
+        return {"host": _to_read(host, service), "action": "created"}
 
     @app.post("/api/settings/runpod-key")
     def save_runpod_key(payload: TokenUpdate):
