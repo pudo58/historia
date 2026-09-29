@@ -24,6 +24,17 @@ class _PinnedClient(asyncssh.SSHClient):
         return hmac.compare_digest(key.get_fingerprint("sha256"), self.fingerprint)
 
 
+def _load_private_key(path: str):
+    """Read only the private key file; a sidecar .pub that is stale must not block a working key."""
+    from pathlib import Path
+    try:
+        return asyncssh.import_private_key(Path(path).expanduser().read_bytes())
+    except FileNotFoundError:
+        raise ValueError("Không tìm thấy file khóa SSH riêng: " + path) from None
+    except asyncssh.KeyImportError as exc:
+        raise ValueError("Không đọc được khóa SSH riêng (khóa có passphrase hoặc sai định dạng): " + str(exc)) from exc
+
+
 class SSHExecutor:
     def __init__(self, host: str, port: int, username: str, auth_kind: str,
                  secret: str, pinned_fingerprint: str | None = None) -> None:
@@ -40,13 +51,15 @@ class SSHExecutor:
         if self.auth_kind == "password":
             options.update(password=self.secret, client_keys=[])
         else:
-            options["client_keys"] = [self.secret]
+            options["client_keys"] = [_load_private_key(self.secret)]
         return options
 
     async def inspect_host_key(self) -> str:
         # Key exchange only: do not transmit a username/password/private-key signature.
+        # Explicit options: never load default ~/.ssh keys for a host-key-only handshake (a stale .pub aborts it).
         key = await asyncio.wait_for(
-            asyncssh.get_server_host_key(self.host, self.port, config=None), timeout=15
+            asyncssh.get_server_host_key(self.host, self.port, options=asyncssh.SSHClientConnectionOptions(
+                config=None, agent_path=None, client_keys=None)), timeout=15
         )
         if key is None:
             raise RuntimeError("The server did not present an SSH host key.")
