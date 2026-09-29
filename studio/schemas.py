@@ -81,7 +81,35 @@ class Citation(StrictModel):
     quote: str = Field(min_length=1, max_length=1500)
 
 
+class ShotDesign(StrictModel):
+    purpose: str = Field(default='', max_length=500)
+    subject: str = Field(default='', max_length=500)
+    action: str = Field(default='', max_length=500)
+    shot_size: Literal['wide', 'medium', 'close', 'detail'] = 'wide'
+    camera_angle: Literal['high', 'eye', 'low', 'over_shoulder'] = 'eye'
+    placement: str = Field(default='center', max_length=300)
+    direction: str = Field(default='left-to-right', max_length=300)
+    composition: str = Field(default='', max_length=1000)
+    lighting: str = Field(default='', max_length=500)
+    camera_move: Literal['static', 'slow_push', 'gentle_slide', 'short_follow'] = 'static'
+    narration_excerpt: str = Field(default='', max_length=1000)
+
 class SceneInput(StrictModel):
+    video_profile: Literal['fast', 'quality'] | None = None
+    shot_list: list[ShotDesign] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode='after')
+    def validate_storyboard(self):
+        if self.video_profile == 'quality':
+            raise ValueError('Profile chất lượng chưa xác minh tương thích chính thức; chưa sẵn sàng.')
+        if self.video_profile == 'fast' and (self.clip_steps if self.clip_steps is not None else self.steps) not in (None, 4):
+            raise ValueError('Wan LightX2V fast cần đúng 4 bước.')
+        if self.shot_list and self.image_strategy != 'per_shot':
+            from studio.storyboard import composition
+            if len({composition(s.model_dump()) for s in self.shot_list}) > 1:
+                raise ValueError('Đổi góc/bố cục cần ảnh riêng per_shot và duyệt trước Wan.')
+        return self
+
     chapter: str = Field(default="Chương 1", max_length=200)
     title: str = Field(min_length=1, max_length=160)
     narration: str = Field(default="", max_length=4000)

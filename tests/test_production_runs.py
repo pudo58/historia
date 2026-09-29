@@ -49,6 +49,43 @@ def complete(service, jobs, run_id, kind):
     return job
 
 
+def test_storyboard_selective_reuse_keeps_audio_and_files(setup, monkeypatch):
+    from studio.schemas import ShotDesign
+    from studio.storyboard import input_identity
+    _, service, jobs, project, scene, _ = setup
+    monkeypatch.setattr('studio.media.probe', lambda path: {'duration': 8})
+    row = service.require(Scene, scene['id'])
+    data = {**row.data, 'shot_list': [ShotDesign().model_dump(), ShotDesign().model_dump()],
+            'image_strategy': 'per_shot', 'speech_id': 'audio', 'duration': 8}
+    images, clips = [], []
+    for kind, ids in [('keyframe', images), ('clip', clips)]:
+        if kind == 'clip':
+            data['shot_keyframes'] = images
+        for index in range(2):
+            path = service.root / f'{kind}-{index}.bin'
+            path.write_bytes(f'{kind}-{index}'.encode())
+            ids.append(service.artifact(path, project['id'], path.name, None,
+                       {'shot_input_identity': input_identity(data, index, kind)})['id'])
+    data.update(keyframe_id=images[0], shot_keyframes=images, clip_ids=clips)
+    with service.sessions() as session:
+        row.data = data
+        session.add(row)
+        session.commit()
+    original_path = service.artifact_path
+    monkeypatch.setattr(service, 'artifact_path', lambda id: service.root / 'audio' if id == 'audio' else original_path(id))
+    shots = deepcopy(data['shot_list'])
+    shots[0]['camera_angle'] = 'low'
+    payload = {k: data[k] for k in SceneInput.model_fields if k in data}
+    saved = service.update_scene(row.id, SceneUpdate(**{**payload, 'shot_list': shots}, revision=row.revision))
+    assert saved['speech_id'] == 'audio'
+    assert saved['clip_ids'] == clips
+    assert saved['reuse_clip_ids'] == {'1': clips[1]}
+    assert saved['reuse_shot_keyframes'] == {'1': images[1]}
+    assert saved['affected_shots'] == [1]
+    assert not saved['keyframe_approved']
+    assert all(original_path(id).is_file() for id in images + clips)
+
+
 def test_full_pipeline_and_idempotency(setup):
     client, service, jobs, project, scene, request = setup
     url = f"/api/studio/projects/{project['id']}/production-runs"

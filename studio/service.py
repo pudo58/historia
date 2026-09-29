@@ -47,8 +47,21 @@ class StudioService:
         return result
 
     def projects(self) -> list[dict]:
+        """Project summaries include an existing media reference, not generated imagery."""
         with self.sessions() as session:
-            return [self.read(p) for p in session.scalars(select(Project).order_by(Project.updated_at.desc()))]
+            projects = [self.read(p) for p in session.scalars(select(Project).order_by(Project.updated_at.desc()))]
+            if not projects:
+                return projects
+            ids = {project['id'] for project in projects}
+            # Choose an existing saved clip; the thumbnail route validates its checksum
+            # before returning pixels and never renders remotely.
+            videos = session.scalars(select(Artifact).where(Artifact.project_id.in_(ids), Artifact.media_type.like('video/%'), Artifact.name.like('clip-%')).order_by(Artifact.id))
+            previews: dict[str, str] = {}
+            for video in videos:
+                previews.setdefault(video.project_id, video.id)
+            for project in projects:
+                project['thumbnail_clip_id'] = previews.get(project['id'])
+            return projects
 
     def create_project(self, data: ProjectInput) -> dict:
         project = Project(data={**data.model_dump(), "outline": [], "outline_approved": False})
@@ -224,6 +237,8 @@ class StudioService:
             text = " ".join(source.data.get("text", "").split())
             if not quote or quote not in text:
                 raise ValueError("Đoạn trích không có nguyên văn trong nguồn. Hãy copy một câu có sẵn, không diễn đạt lại.")
+        from studio.storyboard import warnings as shot_warnings
+        warnings.extend(shot_warnings([s.model_dump() for s in data.shot_list], data.image_strategy))
         if not data.citations:
             warnings.append("Chưa có nguồn lịch sử: cần bạn kiểm chứng trước khi duyệt.")
         return warnings
@@ -232,6 +247,8 @@ class StudioService:
         self.require(Project, project_id)
         self.assert_idle(project_id)
         warnings = self.validate_scene(project_id, data)
+        if data.shot_list:
+            raise ValueError('Tạo audio và đo thời lượng trước khi lập shot list.')
         with self.sessions() as session:
             scenes = list(session.scalars(select(Scene).where(Scene.project_id == project_id)))
             row = Scene(project_id=project_id, position=len(scenes)+1,
@@ -246,11 +263,24 @@ class StudioService:
         warnings = self.validate_scene(old.project_id, data)
         if data.revision != old.revision:
             raise ValueError("Cảnh đã được cập nhật ở nơi khác. Tải lại trước khi lưu.")
-        values = {**old.data, **data.model_dump(exclude={"revision"}), "warnings": warnings}
+        incoming = data.model_dump(exclude={'revision'})
+        for field in ('shot_list', 'video_profile'):
+            if field not in data.model_fields_set:
+                incoming.pop(field, None)
+        values = {**old.data, **incoming, 'warnings': warnings}
+        if values.get('shot_list'):
+            from studio.media import probe, scene_clip_count
+            if not values.get('speech_id'):
+                raise ValueError('Cần audio đã đo trước khi lập shot list.')
+            measured = probe(self.artifact_path(values['speech_id']))['duration']
+            if len(values['shot_list']) != scene_clip_count(values, measured):
+                raise ValueError('Shot list phải khớp số shot từ audio đã đo; không tự tăng lượt GPU.')
         from studio.generation import identity_scene
         visual_fields = ["visual_prompt", "camera", "character_ids", "reference_ids", "seed", "steps"]
         before, after = identity_scene(old.data, 'keyframe'), identity_scene(values, 'keyframe')
         if any(before.get(k) != after.get(k) for k in visual_fields):
+            values.pop('reuse_shot_keyframes', None)
+            values.pop('reuse_clip_ids', None)
             for k in ["keyframe_id", "keyframe_approved", "shot_keyframes",
                       "shot_keyframes_approved", "clip_ids", "clip_approved", "rife_clip_ids"]:
                 values.pop(k, None)
@@ -264,12 +294,43 @@ class StudioService:
                 values.pop('shot_keyframes', None)
                 values.pop('shot_keyframes_approved', None)
         if old.data.get("narration") != values["narration"]:
+            values.pop('reuse_clip_ids', None)
+            values['affected_shots'] = list(range(1, len(old.data.get('shot_list') or []) + 1))
             values.pop("speech_id", None)
             values.pop("duration", None)
             values.pop("shot_count", None)
             values["clip_ids"] = []
             values["clip_approved"] = False
             values.pop('rife_clip_ids', None)
+        if (old.data.get('shot_list') or []) != (values.get('shot_list') or []) or old.data.get('video_profile') != values.get('video_profile'):
+            from studio.storyboard import input_identity
+            affected = []
+            for kind, field in [('keyframe', 'shot_keyframes'), ('clip', 'clip_ids')]:
+                previous = old.data.get(field) or ([old.data['keyframe_id']] if kind == 'keyframe' and old.data.get('keyframe_id') else [])
+                reuse = {}
+                for index, artifact_id in enumerate(previous):
+                    try:
+                        expected = input_identity(values, index, kind)
+                        artifact = self.require(Artifact, artifact_id)
+                        if (input_identity(old.data, index, kind) == expected and
+                                artifact.data.get('shot_input_identity') == expected):
+                            reuse[str(index)] = artifact_id
+                        else:
+                            affected.append(index + 1)
+                    except (IndexError, KeyError):
+                        affected.append(index + 1)
+                if kind == 'clip' and old.data.get('narration') != values.get('narration'):
+                    reuse = {}
+                values['reuse_' + field] = reuse
+                values['previous_' + field] = previous
+            values['affected_shots'] = sorted(set(affected))
+            values['shot_keyframes_approved'] = False
+            values['keyframe_approved'] = False
+            values['clip_approved'] = False
+            values.pop('rife_clip_ids', None)
+            # Keep original media addressable for before/after review. Reuse maps,
+            # not the retained list, authorize individual outputs on the next job.
+            values['clip_ids'] = old.data.get('clip_ids', [])
         values["script_approved"] = False
         with self.sessions() as session:
             old.data = values
@@ -293,6 +354,13 @@ class StudioService:
         if target == "clip" and not row.data.get("clip_ids"):
             raise ValueError("Chưa có clip để duyệt.")
         if approved and target == "keyframe":
+            if row.data.get('shot_list'):
+                from studio.storyboard import input_identity
+                selected = row.data.get('shot_keyframes') or [row.data['keyframe_id']]
+                for index, artifact_id in enumerate(selected):
+                    artifact = self.require(Artifact, artifact_id)
+                    if artifact.data.get('shot_input_identity') != input_identity(row.data, index, 'keyframe'):
+                        raise ValueError('Ảnh chưa khớp góc/bố cục mới; tạo ảnh bị ảnh hưởng trước khi duyệt.')
             self.artifact_path(row.data["keyframe_id"])
             if row.data.get('image_strategy') == 'per_shot':
                 from studio.media import probe, scene_clip_count
@@ -303,6 +371,11 @@ class StudioService:
                 for artifact_id in selected:
                     self.artifact_path(artifact_id)
         if approved and target == "clip":
+            if row.data.get('shot_list'):
+                from studio.storyboard import input_identity
+                for index, artifact_id in enumerate(row.data['clip_ids']):
+                    if self.require(Artifact, artifact_id).data.get('shot_input_identity') != input_identity(row.data, index, 'clip'):
+                        raise ValueError('Clip còn dùng ảnh/bố cục cũ; tạo lại shot bị ảnh hưởng trước khi duyệt.')
             from studio.media import probe
             if not row.data.get("keyframe_approved") or not row.data.get("speech_id") or not row.data.get("script_approved"):
                 raise ValueError("Duyệt ảnh, kịch bản và tạo giọng đọc trước khi duyệt clip.")

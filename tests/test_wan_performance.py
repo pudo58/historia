@@ -489,6 +489,42 @@ async def test_resume_completed_shots_uses_override_only_for_missing(local, monk
 
 
 @pytest.mark.asyncio
+async def test_storyboard_image_video_prompt_and_resume(local, monkeypatch):
+    from studio.schemas import ShotDesign
+    _, service, jobs, old, image = local
+    monkeypatch.setattr('studio.jobs.probe', lambda p: {'duration': 8})
+    shots = [ShotDesign(subject='boat').model_dump(), ShotDesign(subject='boat', camera_angle='low').model_dump()]
+    scene = {**old.snapshot['scene'], 'shot_list': shots, 'image_strategy': 'per_shot'}
+    calls = []
+    async def generate(job, graph, prompt, images, seed, quality, log, checkpoint, stage, steps, index):
+        calls.append((graph, prompt, stage))
+        path = service.job_directory(job.id) / (stage + '.fixture')
+        path.write_bytes(image.read_bytes())
+        return path
+    monkeypatch.setattr(jobs.backend, 'generate', generate)
+    def new_job(kind, value):
+        with service.sessions() as session:
+            job = Job(project_id=old.project_id, scene_id=old.scene_id, kind=kind, status='running',
+                      snapshot={'project': old.snapshot['project'], 'scene': deepcopy(value)}, input_hash=kind)
+            session.add(job)
+            session.commit()
+        return job
+    keyframe = new_job('keyframe', scene)
+    await jobs._execute(keyframe)
+    with service.sessions() as session:
+        images = list(session.scalars(__import__('sqlalchemy').select(Artifact).where(Artifact.job_id == keyframe.id).order_by(Artifact.name)))
+    scene.update(shot_keyframes=[a.id for a in images], keyframe_id=images[0].id)
+    clip = new_job('clip', scene)
+    await jobs._execute(clip)
+    assert calls[0][1] == calls[2][1]
+    assert calls[1][1] == calls[3][1]
+    assert 'camera_angle: low' in calls[3][1]
+    assert service.require(Job, clip.id).result.get('stale')
+    await jobs._execute(clip)
+    assert len(calls) == 4  # persisted files resume without another submission
+
+
+@pytest.mark.asyncio
 async def test_process_restart_invalidates_cache(local, monkeypatch):
     mock = ComfyMock(local, monkeypatch)
     generations = iter(['pid:1', 'pid:2'])

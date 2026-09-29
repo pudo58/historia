@@ -15,7 +15,7 @@ async function fixture(page:Page, status='running') {
   await page.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     if(request.method()!=='GET'){mutations.push(path);if(path.endsWith('/pause'))run.status='paused';return route.fulfill({json:{}});}
-    if(path.includes('/events')) {
+    if(path.includes('/events')||path.includes('/journal')) {
       if(failLogs)return route.fulfill({status:503,json:{detail:'Disconnected'}});
       let rows=entries.filter(e=>(!url.searchParams.get('job_id')||e.job_id===url.searchParams.get('job_id'))&&(!url.searchParams.get('q')||e.message.includes(url.searchParams.get('q')!))&&(!url.searchParams.get('level')||url.searchParams.get('level')!.split(',').includes(e.level)));
       if(path.endsWith('/export'))return route.fulfill({body:rows.map(e=>JSON.stringify(e)).join('\n'),headers:{'content-type':'application/x-ndjson','content-disposition':'attachment; filename="journal.ndjson"'}});
@@ -38,8 +38,43 @@ async function fixture(page:Page, status='running') {
     if(path.endsWith('/artifacts'))return route.fulfill({json:[]});
     return route.fulfill({json:[]});
   });
-  return {mutations,errors,entries,disconnect:()=>{failLogs=true;}};
+  return {mutations,errors,entries,project,jobs,disconnect:()=>{failLogs=true;}};
 }
+
+for(const width of [375,1366])test(`storyboard screenshot ${width}`,async({page},testInfo)=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project.scenes[4],{duration:8});
+  await page.setViewportSize({width,height:900});
+  await page.goto('/?page=projects&project=p&tab=video');
+  await page.getByRole('button',{name:'Sửa cảnh',exact:true}).click();
+  await page.getByRole('button',{name:'Lập shot list từ audio đã đo'}).click();
+  await page.getByText('Storyboard · góc máy có chủ đích').scrollIntoViewIfNeeded();
+  await expect(page.getByText(/không căn theo timestamp/)).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+  await page.screenshot({path:testInfo.outputPath(`storyboard-${width}.png`),fullPage:true});
+});
+
+test('storyboard editor blocks unverified quality without GPU submission',async({page})=>{
+  const state=await fixture(page,'completed');
+  await page.goto('/?page=projects&project=p&tab=video');
+  await page.getByRole('button',{name:'Sửa cảnh',exact:true}).click();
+  await expect(page.getByText('Storyboard · góc máy có chủ đích')).toBeVisible();
+  await expect(page.locator('select[name="video_profile"] option[value="quality"]')).toHaveAttribute('disabled','');
+  await expect(page.getByRole('button',{name:'Lập shot list từ audio đã đo'})).toBeDisabled();
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('Vietnamese headings normalize and project library does not overflow on mobile',async({page})=>{
+  const state=await fixture(page);
+  await page.setViewportSize({width:375,height:812});
+  await page.goto('/?page=projects');
+  const title=page.getByRole('heading',{name:/Thăng Long · Một ngày/});
+  await expect(title).toBeVisible();
+  expect((await title.textContent())?.normalize('NFC')).toBe(await title.textContent());
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+  expect(state.errors).toEqual([]);
+});
 
 test('Video has one player, stable selection and contextual journal',async({page})=>{
   const state=await fixture(page);
@@ -65,6 +100,101 @@ test('Video has one player, stable selection and contextual journal',async({page
   await page.reload();
   await expect(page.locator('video')).toHaveAttribute('src',source!);
   expect(state.mutations).toEqual([]);expect(state.errors).toEqual([]);
+});
+
+test('task details open the selected job journal in place',async({page})=>{
+  const state=await fixture(page);
+  await page.goto('/?page=jobs');
+  await page.getByRole('button',{name:/Cảnh 2 · Kinh thành/}).click();
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 2 · Kinh thành/})}).getByRole('button',{name:'Xem log dạng popup ↗'}).click();
+  const journal=page.getByRole('dialog',{name:/Nhật ký · Cảnh 2/});
+  await expect(journal).toBeVisible();
+  await expect(journal.locator('.journal-row').first()).toBeVisible();
+  await expect(page).toHaveURL(/task_log=1/);
+  await expect(page).toHaveURL(/task=j1/);
+  await journal.locator('.journal-row .journal-message').first().click();
+  const event=page.getByRole('dialog',{name:/Sự kiện #/});
+  await expect(event).toContainText('Đã lưu và kiểm tra output');
+  await page.keyboard.press('Escape');
+  await expect(event).toHaveCount(0);
+  await expect(journal).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(journal).toHaveCount(0);
+  await expect(page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 2 · Kinh thành/})}).getByRole('button',{name:'Xem log dạng popup ↗'})).toBeFocused();
+  await expect(page).not.toHaveURL(/task(?:_log)?=/);
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toHaveCount(0);
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('row actions target their job, guard double clicks and retain abandon confirmation',async({page})=>{
+  const state=await fixture(page);
+  state.jobs[0].status='paused';
+  state.jobs[0].snapshot.production_run_id='row-run';
+  await page.goto('/?page=jobs&task=j1');
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toBeVisible();
+  const row=page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 1 · Kinh thành/})});
+  // Dispatch deliberately while another task is selected to catch stale-selection handlers.
+  let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const requests:string[]=[];
+  await page.route('**/api/studio/production-runs/row-run/resume',async route=>{requests.push(route.request().url());await gate;await route.fulfill({json:{}});});
+  await row.getByRole('button',{name:'Tiếp tục',exact:true}).evaluate(button=>{(button as HTMLButtonElement).click();(button as HTMLButtonElement).click();});
+  await expect.poll(()=>requests.length).toBe(1);
+  release();
+  await page.keyboard.press('Escape');
+  await expect(row.getByRole('button',{name:'Bỏ lượt',exact:true})).toBeEnabled();
+  page.once('dialog',dialog=>dialog.dismiss());
+  await row.getByRole('button',{name:'Bỏ lượt',exact:true}).click();
+  expect(state.mutations).toEqual([]);
+  page.once('dialog',dialog=>dialog.accept());
+  await row.getByRole('button',{name:'Bỏ lượt',exact:true}).click();
+  await expect.poll(()=>state.mutations).toEqual(['/api/studio/jobs/j0/abandon']);
+  expect(state.errors).toEqual([]);
+});
+
+test('row failures remain visible and task dialogs follow browser history',async({page})=>{
+  const state=await fixture(page);
+  await page.route('**/api/studio/jobs/j5/cancel',route=>route.fulfill({status:409,json:{detail:'Mock conflict: thử lại sau'}}));
+  await page.goto('/?page=jobs&task=j1');
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toBeVisible();
+  await page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 6 · Kinh thành/})}).getByRole('button',{name:'Dừng an toàn'}).evaluate(button=>(button as HTMLButtonElement).click());
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('j5');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('alert')).toContainText('Mock conflict');
+  const row=page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 2 · Kinh thành/})});
+  await row.getByRole('button',{name:'Xem log dạng popup ↗'}).click();
+  await expect(page.getByRole('dialog',{name:/Nhật ký/})).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/task(?:_log)?=/);
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+for(const width of [375,768,1440])test(`task dialogs preserve list position and direct log is read only ${width}`,async({page})=>{
+  const state=await fixture(page);
+  await page.setViewportSize({width,height:900});
+  await page.goto('/?page=jobs');
+  const row=page.locator('.task-table tbody tr').first();
+  await row.locator('.task-title').scrollIntoViewIfNeeded();
+  const scroll=await page.evaluate(()=>window.scrollY);
+  await row.locator('.task-title').click();
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toBeVisible();
+  expect(await page.evaluate(()=>window.scrollY)).toBe(scroll);
+  await page.keyboard.press('Escape');
+  await row.getByRole('button',{name:'Xem log dạng popup ↗'}).click();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('dialog',{name:/Nhật ký/})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page).not.toHaveURL(/task(?:_log)?=/);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
 });
 
 test('journal server search, older pages, no forced scroll and full export',async({page})=>{
@@ -98,12 +228,14 @@ test('pause is explicit and sent only once; task table uses names',async({page})
   await expect(page.locator('.task-table tbody tr')).toHaveCount(14);
   await page.getByRole('button',{name:/Cảnh 2 · Kinh thành/}).click();
   await expect(page.getByRole('region',{name:'Chi tiết tác vụ'})).toBeVisible();
-  await page.getByRole('button',{name:'Nhật ký ↗',exact:true}).click();
-  await expect(page).toHaveURL(/log_job=j1/);
+  await page.keyboard.press('Escape');
+  await page.getByRole('row').filter({has:page.getByRole('button',{name:/Cảnh 2 · Kinh thành/})}).getByRole('button',{name:'Xem log dạng popup ↗',exact:true}).click();
+  await expect(page).toHaveURL(/task_log=1/);
+  await expect(page.getByRole('dialog',{name:/Nhật ký · Cảnh 2/}).locator('.journal-row').first()).toBeVisible();
   expect(state.mutations).toHaveLength(1);expect(state.errors).toEqual([]);
 });
 
-for(const width of [1920,1366,1024,768])test(`layout ${width}px`,async({page})=>{
+for(const width of [1920,1366,1024,768,375])test(`layout ${width}px`,async({page})=>{
   const state=await fixture(page);
   await page.setViewportSize({width,height:768});
   await page.goto('/?page=projects&project=p&tab=video');

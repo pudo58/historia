@@ -217,6 +217,8 @@ class StudioJobs:
         """Called under a writer transaction. Never change an existing prompt intent."""
         from studio.schemas import PendingClipConfig
         config = PendingClipConfig.model_validate(config).model_dump(exclude_unset=True)
+        if job.snapshot['scene'].get('video_profile') and config.get('clip_steps', 4) != 4:
+            raise ValueError('LightX2V fast cần đúng 4 bước; profile chất lượng chưa sẵn sàng.')
         duration = probe(self.service.artifact_path(job.snapshot['scene']['speech_id']))['duration']
         protected = job.result.get('submissions', {})
         with self.service.sessions() as session:
@@ -382,7 +384,12 @@ class StudioJobs:
                 fields |= {'keyframe_id', 'keyframe_approved', 'speech_id'}
             if kind == 'rife':
                 return {'profile': project.get('frame_interpolation'), 'clip_ids': scene.get('clip_ids')}
+            fields -= {'shot_list', 'video_profile'}
             values = {k: scene.get(k) for k in sorted(fields)}
+            if kind in {'keyframe', 'clip'} and scene.get('shot_list'):
+                values['shot_list'] = scene['shot_list']
+            if kind == 'clip' and scene.get('video_profile'):
+                values['video_profile'] = scene['video_profile']
             if kind == 'clip':
                 values.update({k: scene[k] for k in ('motion', 'image_strategy', 'shorten_last_shot') if k in scene})
             return {'project': settings, 'scene': values}
@@ -1015,6 +1022,8 @@ class StudioJobs:
                 images = [self.service.artifact_path(scene["keyframe_id"])]
             count = (scene_clip_count(scene, probe(self.service.artifact_path(scene['speech_id']))['duration'])
                 if job.kind == 'clip' or (job.kind == 'keyframe' and scene.get('image_strategy') == 'per_shot') else 1)
+            if scene.get('shot_list') and len(scene['shot_list']) != count and (job.kind == 'clip' or scene.get('image_strategy') == 'per_shot'):
+                raise ValueError('Shot list không khớp audio đã đo; duyệt lại trước khi gửi GPU.')
             ids = []
             for index in range(count):
                 boundary = self.service.require(Job, job.id)
@@ -1032,7 +1041,18 @@ class StudioJobs:
                     self.service.artifact_path(existing.id)
                     ids.append(existing.id)
                     continue
-                if job.kind == 'keyframe' and scene.get('image_strategy') == 'per_shot' and index == 0 and scene.get('keyframe_id') and scene.get('keyframe_approved'):
+                reuse = scene.get('reuse_shot_keyframes' if job.kind == 'keyframe' else 'reuse_clip_ids', {}).get(str(index))
+                if reuse and not boundary.result.get('submissions', {}).get(stage):
+                    from studio.storyboard import input_identity as shot_identity
+                    artifact = self.service.require(Artifact, reuse)
+                    from studio.production import dependency_identity
+                    source_job = self.service.require(Job, artifact.job_id) if artifact.job_id else None
+                    same_project_inputs = source_job and dependency_identity(source_job.snapshot['project'], scene, job.kind) == dependency_identity(project, scene, job.kind)
+                    if same_project_inputs and artifact.data.get('shot_input_identity') == shot_identity(scene, index, job.kind):
+                        self.service.artifact_path(reuse)
+                        ids.append(reuse)
+                        continue
+                if not scene.get('shot_list') and job.kind == 'keyframe' and scene.get('image_strategy') == 'per_shot' and index == 0 and scene.get('keyframe_id') and scene.get('keyframe_approved'):
                     self.service.artifact_path(scene['keyframe_id'])
                     ids.append(scene['keyframe_id'])
                     continue
@@ -1066,6 +1086,9 @@ class StudioJobs:
                     if job.kind == 'keyframe' and count > 1 else prompt) if job.kind == 'keyframe' else (
                     prompt + f'\nShot {index+1}/{count}: {framing[index % len(framing)]}. '
                     f'Unique moment {index+1} in the scene progression. No repeated or slowed footage.')
+                if scene.get('shot_list'):
+                    from studio.storyboard import prompt_suffix
+                    shot_prompt = prompt + '\n' + prompt_suffix(scene['shot_list'][index], project.get('aspect_ratio') == '9:16')
                 started = time.monotonic()
                 from studio.generation import stage_steps
                 path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images,
@@ -1076,7 +1099,8 @@ class StudioJobs:
                 artifact = self.service.artifact(path, job.project_id, stage + (".mp4" if job.kind == "clip" else ".png"), job.id,
                     {'prompt': shot_prompt, 'shot_index': index, 'elapsed_seconds': time.monotonic()-started,
                      'generation': measurement,
-                     'input_revision': scene['revision']})
+                     'input_revision': scene['revision'],
+                     **({'shot_input_identity': __import__('studio.storyboard', fromlist=['input_identity']).input_identity(scene, index, job.kind)} if scene.get('shot_list') else {})})
                 if measurement:
                     storage_seconds = time.monotonic() - stored
                     checkpoint(stage, {'artifact_id': artifact['id'], 'timing': {
@@ -1086,8 +1110,9 @@ class StudioJobs:
                 self.patch(job.id, progress=round((index+1)*95/count))
             self.scene_result(job.scene_id, job=job, **({"keyframe_id": ids[0], "keyframe_approved": False,
                 **({'shot_keyframes': ids, 'shot_keyframes_approved': False}
-                   if scene.get('image_strategy') == 'per_shot' else {}),
-                "clip_ids": [], "clip_approved": False} if job.kind == "keyframe" else {"clip_ids": ids, "clip_approved": False}))
+                   if scene.get('image_strategy') == 'per_shot' or scene.get('shot_list') else {}),
+                "clip_ids": scene.get('clip_ids', []) if scene.get('shot_list') else [], "clip_approved": False,
+                'reuse_shot_keyframes': {}} if job.kind == "keyframe" else {"clip_ids": ids, "clip_approved": False, 'reuse_clip_ids': {}}))
         elif job.kind == "export":
             selected_music = [source for source in project.get('sources', [])
                 if source.get('kind') == 'audio' and source.get('selected')]

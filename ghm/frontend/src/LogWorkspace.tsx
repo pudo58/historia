@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import Dialog from './Dialog';
 import { activeStatuses, names, navigate, read, useLocationState, type StudioJob } from './workspace';
 
 type Entry={id:number;job_id:string;scene_id?:string;scene_title?:string;kind:string;created_at:string;message:string;level?:string;stage?:string;legacy:boolean;source?:string};
@@ -83,7 +84,9 @@ function Journal({projectId,jobId,jobs,onBack,scope,endpoint,filters}:Props&{sco
         {!events.length&&<div className="work-empty">{query.isFetching?'Đang tải nhật ký…':'Chưa có sự kiện phù hợp.'}<small>Nhật ký Studio; không phải terminal hoặc log Comfy thô.</small></div>}
         <div style={{height:events.length*rowHeight,position:'relative'}}>{visible.map((e,i)=><article key={e.id} className={`journal-row ${wrap?'wrapped':''} level-${e.level||'unknown'}`} style={{position:'absolute',top:(start+i)*rowHeight,height:rowHeight}}><time>{new Date(e.created_at).toLocaleTimeString('vi-VN')}</time><span className="journal-source" title={e.job_id}>{e.scene_title||names[e.kind]}<small>{e.stage||'Toàn tác vụ'} · {e.level||'cũ'}</small></span><button className="journal-message" onClick={()=>setInspected(e)} title="Mở nội dung đầy đủ">{e.message}</button></article>)}</div>
       </div><footer className="journal-footer"><label><input type="checkbox" checked={follow} onChange={e=>{setFollow(e.target.checked);setUnseen(0);}}/> Theo dõi dòng mới</label><label><input type="checkbox" checked={wrap} onChange={e=>{setWrap(e.target.checked);setScrollTop(0);if(viewport.current)viewport.current.scrollTop=0;}}/> Xuống dòng</label><button onClick={()=>void navigator.clipboard.writeText(events.map(e=>`${e.created_at} ${e.message}`).join('\n')).catch(()=>setError('Không truy cập được clipboard. Chọn nội dung để sao chép.'))}>Sao chép phần đã tải</button>{unseen>0&&<button onClick={()=>{setFollow(true);setUnseen(0);}}>{unseen} dòng mới ↓</button>}<small>{events.length} dòng đã tải · dùng Tải nhật ký để lấy đầy đủ</small></footer>
-      {inspected&&<section className="event-detail"><header><strong>Sự kiện #{inspected.id} · {inspected.source||'Studio'}</strong><button onClick={()=>setInspected(null)}>Đóng nội dung</button></header><pre>{view==='technical'?JSON.stringify(inspected,null,2):inspected.message}</pre><small>{inspected.legacy?'Sự kiện cũ · chưa có metadata công đoạn/mức độ':inspected.stage||'Sự kiện chung của tác vụ'}</small></section>}
     </div></div>
+    {inspected&&<Dialog title={`Sự kiện #${inspected.id}`} description={`${inspected.scene_title||names[inspected.kind]||'Studio'} · ${new Date(inspected.created_at).toLocaleString('vi-VN')}`} onClose={()=>setInspected(null)} className="studio-event-dialog">
+      <div className="event-detail"><p>{inspected.legacy?'Sự kiện cũ · chưa có metadata công đoạn/mức độ':`${inspected.stage||'Toàn tác vụ'} · ${inspected.level||'Thông tin'}`}</p><pre>{view==='technical'?JSON.stringify(inspected,null,2):inspected.message}</pre></div>
+    </Dialog>}
   </section>;
 }

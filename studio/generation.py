@@ -16,6 +16,12 @@ def compatible_workflow_hashes(old, current):
 
 
 def stage_steps(scene, kind, workflow=None, project=None, generation_version=2):
+    if kind == 'clip' and scene.get('video_profile'):
+        if scene['video_profile'] != 'fast':
+            raise ValueError('Profile chất lượng chưa được xác minh; không fallback.')
+        if scene.get('clip_steps', scene.get('steps')) not in (None, 4):
+            raise ValueError('LightX2V fast cần đúng 4 bước.')
+        return 4
     lightning = (generation_version >= 3 and workflow == 'qwen_image' and
                  (project or {}).get('keyframe_profile') == 'lightning')
     if lightning:
@@ -35,6 +41,8 @@ def stage_steps(scene, kind, workflow=None, project=None, generation_version=2):
 def clip_config(project, scene, override=None, *, index=None, duration=None):
     width, height = resolve_format(project.get('quality', 'draft'), project)['render_size']
     settings = override or {}
+    if scene.get('video_profile') and settings.get('clip_steps', 4) != 4:
+        raise ValueError('LightX2V fast cần đúng 4 bước; không sửa cấu hình đã gửi.')
     frames = 81
     if settings.get('shorten_last_shot', scene.get('shorten_last_shot', False)) and index is not None and duration:
         count = math.ceil(duration / (81 / 16))

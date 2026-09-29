@@ -3,5 +3,5 @@
 @tailwind utilities;
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-input, select { color-scheme: dark; }
+body { margin: 0; font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif; }
+input, select { color-scheme: light; }

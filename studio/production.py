@@ -37,6 +37,10 @@ def dependency_identity(project, scene, kind):
                  'render_size': resolve_format(project.get('quality', 'draft'), project)['render_size'],
                  'render_profile': project.get('render_profile') or ('standard' if project.get('quality') == 'final' else 'draft'),
                  'characters': characters, 'references': [s for s in project['sources'] if s['id'] in refs]}
+        if scene.get('shot_list'):
+            value['scene']['shot_list'] = scene['shot_list']
+        if kind == 'clip' and scene.get('video_profile'):
+            value['scene']['video_profile'] = scene['video_profile']
         if kind == 'keyframe' and project.get('keyframe_profile', 'standard') != 'standard':
             value['keyframe_profile'] = project['keyframe_profile']
         if kind == 'clip':
@@ -240,7 +244,7 @@ class ProductionRuns:
             selected = media.get('shot_keyframes') or []
             from studio.media import scene_clip_count
             duration = probe(self.service.artifact_path(media['speech_id']))['duration'] if media.get('speech_id') else 0
-            if (not scene or len(selected) != scene_clip_count(scene, duration) or
+            if (not scene or len(selected) != (scene_clip_count(scene, duration) if scene.get('image_strategy') == 'per_shot' else 1) or
                     not all(self.jobs.artifact_valid(a) for a in selected)):
                 raise ValueError('Thiếu ảnh riêng hợp lệ; không chạy Wan.')
             cp['media'][scene_id] = {**media, 'keyframe_approved': True,
@@ -291,7 +295,7 @@ class ProductionRuns:
                     raise ValueError('Checkpoint thiếu file hoặc checksum không hợp lệ; không tự chạy lại GPU.')
                 if current.kind != 'export':
                     cp['media'][current.scene_id] = {**cp['media'].get(current.scene_id, {}), **output}
-                    if (current.kind == 'keyframe' and current.snapshot['scene'].get('image_strategy') == 'per_shot'
+                    if (current.kind == 'keyframe' and (current.snapshot['scene'].get('image_strategy') == 'per_shot' or current.snapshot['scene'].get('shot_list'))
                             and not cp['media'][current.scene_id].get('shot_keyframes_approved')):
                         cp['review_scene_id'] = current.scene_id
                         run.status = 'keyframe_review'

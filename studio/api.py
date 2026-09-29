@@ -9,6 +9,7 @@ from sqlalchemy import select
 from studio.importer import EXTENSIONS, import_file
 from studio.models import Artifact, Installation, Job, JobEvent, Project
 from studio.packs import pack_info
+from studio.thumbnail import video_thumbnail
 from studio.schemas import (
     Approval,
     BenchmarkInput,
@@ -43,6 +44,12 @@ def router(service, jobs, host_lock):
         return {"name": "Historical Video Studio", "version": "0.4.0", "ai_ready": ready,
                 "message": "Cài bộ AI qua Full SSH trong Bộ AI & kiểm chứng. Chỉ mở tác vụ AI sau khi output kiểm chứng pass.",
                 "billing_notice": "Dừng render hoặc đóng web KHÔNG dừng tính tiền GPU thuê."}
+
+    @api.get('/quality-policy')
+    def quality_policy():
+        from studio.storyboard import QUALITY_STATUS, BENCHMARK_CASES
+        return {'profiles': QUALITY_STATUS, 'benchmark_cases': BENCHMARK_CASES,
+                'gpu_acceptance': 'pending_visual_review', 'automatic_execution': False}
 
     @api.get('/script-provider')
     def script_provider():
@@ -367,6 +374,21 @@ def router(service, jobs, host_lock):
         service.require(Project, id)
         with service.sessions() as session:
             return [service.read(a) for a in session.scalars(select(Artifact).where(Artifact.project_id == id))]
+
+    @api.get("/artifacts/{id}/thumbnail")
+    def artifact_thumbnail(id: str):
+        row = service.require(Artifact, id)
+        if not row.media_type.startswith("video/"):
+            raise HTTPException(415, "Thumbnail chỉ hỗ trợ video.")
+        # Verify the original on every request, including cache hits: a changed
+        # source must never be hidden by a previously generated thumbnail.
+        path = service.artifact_path(id)
+        preview = video_thumbnail(path, service.root, row.sha256)
+        return FileResponse(preview, media_type="image/jpeg", filename="thumbnail.jpg",
+                            content_disposition_type="inline",
+                            headers={"Content-Security-Policy": "default-src 'none'; sandbox",
+                                     "X-Content-Type-Options": "nosniff",
+                                     "Cache-Control": "private, max-age=3600"})
 
     @api.get("/artifacts/{id}/file")
     def artifact(id: str, download: bool = False):
