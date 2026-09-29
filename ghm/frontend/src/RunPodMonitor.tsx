@@ -35,6 +35,29 @@ export default function RunPodMonitor() {
     catch(error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
   };
+  const podAction=async(pod:Pod,action:'stop'|'start'|'terminate')=>{
+    const name=pod.name||pod.id;
+    let confirmName='';
+    if(action==='stop'&&!confirm(`Dừng Pod "${name}"?\n\nGPU ngừng tính tiền, nhưng ổ đĩa của Pod vẫn tính phí lưu trữ nhỏ. Dữ liệu ngoài /workspace có thể mất khi bật lại. Bật lại có thể không còn GPU trống cùng loại.`))return;
+    if(action==='terminate'){
+      const typed=prompt(`XÓA VĨNH VIỄN Pod "${name}".\n\nToàn bộ dữ liệu trên Pod (model, output chưa tải về) sẽ mất, không khôi phục được. Máy trong Historia vẫn giữ để bạn tự xóa.\n\nGõ đúng tên Pod để xác nhận:`);
+      if(typed===null)return;
+      confirmName=typed.trim();
+    }
+    setConnecting(pod.id); setMessage('');
+    const send=(force:boolean)=>post(`/api/runpod/pods/${pod.id}/action`,{action,confirm_name:confirmName,force});
+    try {
+      try { await send(false); }
+      catch(error){
+        const text=(error as Error).message;
+        if(!text.startsWith('Historia còn tác vụ')||!confirm(text+'\n\nVẫn tiếp tục? Tác vụ đang chạy sẽ bị gián đoạn và cần đối chiếu lại.'))throw error;
+        await send(true);
+      }
+      setMessage(action==='stop'?`Đã gửi lệnh dừng Pod ${name}. Trạng thái cập nhật sau vài giây.`:action==='start'?`Đã gửi lệnh bật Pod ${name}. IP/cổng có thể đổi: bấm "Cập nhật" sau khi Pod chạy.`:`Đã xóa Pod ${name} trên RunPod.`);
+      await client.invalidateQueries({queryKey:['runpod-pods']});
+    } catch(error) { setMessage((error as Error).message); }
+    finally { setConnecting(''); }
+  };
   const connect=async(pod:Pod,mode:'auto'|'proxy'='auto')=>{
     setConnecting(pod.id); setMessage('');
     try {
@@ -64,7 +87,7 @@ export default function RunPodMonitor() {
   };
   return <section className="panel"><h2>Theo dõi Pod · RunPod</h2>
     {!data?.configured && <>
-      <p>Nhập RunPod API key để xem Pod nào đang chạy và đang tốn bao nhiêu tiền. Historia chỉ đọc, không bao giờ dừng hay xóa Pod. Key lưu mã hóa trên máy này.</p>
+      <p>Nhập RunPod API key để xem Pod nào đang chạy và đang tốn bao nhiêu tiền. Historia chỉ dừng hay xóa Pod khi bạn bấm và xác nhận; dùng key Read/Write nếu muốn điều khiển Pod. Key lưu mã hóa trên máy này.</p>
       <form onSubmit={event=>{event.preventDefault(); save(key.trim());}}>
         <label className="field"><span>RunPod API key (nên tạo key chỉ đọc)</span><input type="password" value={key} onChange={e=>setKey(e.target.value)} autoComplete="off" spellCheck={false} disabled={busy} aria-label="RunPod API key"/></label>
         <button className="primary" disabled={busy||key.trim().length<16}>{busy?'Đang lưu…':'Lưu key'}</button>
@@ -73,14 +96,18 @@ export default function RunPodMonitor() {
       {data.error ? <p className="work-error-box" role="alert">{data.error}</p> : <>
         <p><strong>{data.running_count} Pod đang chạy</strong> · đang tốn {money(data.running_cost_per_hr)}/giờ (≈ {money((data.running_cost_per_hr||0)*24)}/ngày)</p>
         {data.pods.length===0 && <p>Tài khoản chưa có Pod nào.</p>}
-        <div style={{overflowX:'auto'}}><table><thead><tr><th>Pod</th><th>Trạng thái</th><th>GPU</th><th>$/giờ</th><th>Đã chạy</th><th>Đã tốn phiên này</th><th>Máy Historia</th><th></th></tr></thead><tbody>
+        <div style={{overflowX:'auto'}}><table><thead><tr><th>Pod</th><th>Trạng thái</th><th>GPU</th><th>$/giờ</th><th>Đã chạy</th><th>Đã tốn phiên này</th><th>Máy Historia</th><th></th><th>Điều khiển</th></tr></thead><tbody>
           {data.pods.map(p=><tr key={p.id}><td>{p.name||p.id}</td><td>{p.status==='RUNNING'?'🟢 Đang chạy':p.status==='EXITED'?'⏸ Đã dừng':p.status}</td><td>{p.gpu?`${p.gpu_count||1}× ${p.gpu}`:'—'}</td><td>{money(p.cost_per_hr)}</td><td>{uptime(p.uptime_seconds)}</td><td>{money(p.session_cost)}</td><td>{p.host_label||'Chưa nối'}</td><td>{p.host_id||p.status!=='RUNNING'?null:p.ssh_ready
             ?<button disabled={connecting===p.id||!data.ssh_key_path} title={!data.ssh_key_path?'Lưu đường dẫn khóa SSH ở dưới trước':undefined} onClick={()=>connect(p)}>{connecting===p.id?'Đang nối…':p.linked_host_id?'Cập nhật địa chỉ':'Nối vào Historia (SSH gốc)'}</button>
             :<div>
               <small style={{display:'block'}}>Pod không mở TCP 22, nối qua proxy RunPod (Basic SSH).{!p.proxy_username&&' Dán lệnh SSH ở tab Connect của Pod:'}</small>
               {!p.proxy_username&&<input value={pasted[p.id]||''} onChange={e=>setPasted({...pasted,[p.id]:e.target.value})} placeholder="ssh abc123-xxxx@ssh.runpod.io -i ~/.ssh/id_ed25519" spellCheck={false} aria-label="Lệnh SSH của Pod"/>}
               <button disabled={connecting===p.id||!data.ssh_key_path||(!p.proxy_username&&!(pasted[p.id]||'').includes('@ssh.runpod.io'))} title={!data.ssh_key_path?'Lưu đường dẫn khóa SSH ở dưới trước':undefined} onClick={()=>connect(p,'proxy')}>{connecting===p.id?'Đang nối…':p.linked_host_id?'Cập nhật proxy':'Nối qua proxy'}</button>
-            </div>}</td></tr>)}
+            </div>}</td><td><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {p.status==='RUNNING'&&<button disabled={connecting===p.id} onClick={()=>podAction(p,'stop')}>Dừng</button>}
+              {p.status==='EXITED'&&<button disabled={connecting===p.id} onClick={()=>podAction(p,'start')}>Bật</button>}
+              <button className="danger" disabled={connecting===p.id} onClick={()=>podAction(p,'terminate')}>Xóa Pod</button>
+            </div></td></tr>)}
         </tbody></table></div>
         {!data.ssh_key_path?<form onSubmit={e=>{e.preventDefault(); saveKeyPath();}}>
           <label className="field"><span>File khóa SSH riêng (để nối Pod tự động, khóa không đặt passphrase)</span><input value={keyPath} onChange={e=>setKeyPath(e.target.value)} placeholder="C:\Users\bạn\.ssh\id_ed25519" spellCheck={false} disabled={busy}/></label>

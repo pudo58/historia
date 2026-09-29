@@ -159,3 +159,37 @@ def test_ssh_errors_name_the_failing_stage():
     from ghm.services.hosts import describe_ssh_error as d
     assert 'SSH Keys' in d(asyncssh.PermissionDenied('denied'))
     assert 'hết thời gian' in d(TimeoutError())
+
+
+def test_pod_actions_confirm_and_guard_busy_host(client, monkeypatch, tmp_path):
+    _configure(client, monkeypatch, tmp_path, [POD])
+    calls = []
+
+    async def fake_action(_key, pod_id, action):
+        calls.append((pod_id, action))
+    monkeypatch.setattr(runpod, 'pod_action', fake_action)
+    url = '/api/runpod/pods/abc/action'
+    assert client.post(url, json={'action': 'terminate', 'confirm_name': 'nope'}).status_code == 422
+    assert client.post('/api/runpod/pods/zzz/action', json={'action': 'stop'}).status_code == 404
+    # A running Historia job on the matched host blocks stop unless forced.
+    from studio.models import Job
+    from studio.schemas import ProjectInput
+    studio = client.app.state.studio
+    host_id = client.get('/api/runpod/pods').json()['pods'][0]['host_id']
+    project = studio.create_project(ProjectInput(title='F', topic='T'))
+    with studio.sessions() as session:
+        session.add(Job(project_id=project['id'], host_id=host_id, kind='clip', status='running', input_hash='h', snapshot={}))
+        session.commit()
+    assert client.post(url, json={'action': 'stop'}).status_code == 409
+    assert client.post(url, json={'action': 'stop', 'force': True}).status_code == 200
+    assert client.post(url, json={'action': 'start'}).status_code == 200
+    assert client.post(url, json={'action': 'terminate', 'confirm_name': 'wan', 'force': True}).status_code == 200
+    assert calls == [('abc', 'stop'), ('abc', 'start'), ('abc', 'terminate')]
+
+
+def test_pod_action_rejects_bad_input_before_calling_runpod():
+    import asyncio
+    with pytest.raises(runpod.RunPodError):
+        asyncio.run(runpod.pod_action('k', '../x', 'stop'))
+    with pytest.raises(runpod.RunPodError):
+        asyncio.run(runpod.pod_action('k', 'abc', 'reset'))

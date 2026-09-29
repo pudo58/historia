@@ -26,7 +26,7 @@ from ghm.recipe_runner import RecipeRunner
 from ghm import runpod
 from ghm.recipes import RecipeCatalog
 from ghm.tunnel import TunnelManager
-from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunPodConnect, RunStart, HostOptions, TokenUpdate
+from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunPodAction, RunPodConnect, RunStart, HostOptions, TokenUpdate
 from ghm.security import SecretStore
 from ghm.services.hosts import HostService
 from ghm.manifests import load_models, load_nodes, resolve_model
@@ -409,6 +409,44 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             raise HTTPException(422, "Nhập RunPod API key hợp lệ, hoặc để trống để xóa.")
         service.save_setting("runpod_api_key", payload.token)
         return {"runpod_configured": bool(payload.token)}
+
+    @app.post("/api/runpod/pods/{pod_id}/action")
+    async def runpod_pod_action(pod_id: str, payload: RunPodAction):
+        """Stop/start/terminate a Pod on the user's explicit request. Terminate needs the Pod name typed back."""
+        key = service.setting("runpod_api_key")
+        if not key:
+            raise HTTPException(409, "Chưa nhập RunPod API key.")
+        try:
+            pods = await runpod.fetch_pods(key)
+        except runpod.RunPodError as error:
+            raise HTTPException(502, str(error)) from error
+        raw = next((p for p in pods if p.get("id") == pod_id), None)
+        if raw is None:
+            raise HTTPException(404, "Không thấy Pod này trên RunPod.")
+        name = raw.get("name") or pod_id
+        if payload.action == "terminate" and payload.confirm_name.strip() != name:
+            raise HTTPException(422, f"Gõ đúng tên Pod \"{name}\" để xác nhận xóa vĩnh viễn.")
+        with sessions() as session:
+            hosts = [{"id": h.id, "label": h.label, "address": h.address, "port": h.port, "username": h.username}
+                     for h in session.query(Host).all()]
+        pod = runpod.summarize([raw], hosts)["pods"][0]
+        host_id = pod["host_id"] or service.setting(f"runpod_pod_host:{pod_id}")
+        if payload.action != "start" and host_id and not payload.force:
+            from sqlalchemy import select
+            from studio.jobs import ACTIVE
+            from studio.models import Job
+            with app.state.studio.sessions() as session:
+                busy = session.scalar(select(Job.id).where(Job.host_id == host_id, Job.status.in_(ACTIVE)))
+            if busy:
+                raise HTTPException(409, "Historia còn tác vụ đang chạy hoặc chờ trên Pod này. "
+                                         "Dừng/tạm dừng tác vụ trước, hoặc xác nhận dừng Pod dù đang có việc.")
+        try:
+            await runpod.pod_action(key, pod_id, payload.action)
+        except runpod.RunPodError as error:
+            raise HTTPException(502, str(error)) from error
+        if payload.action == "terminate":
+            service.save_setting(f"runpod_pod_host:{pod_id}", "")
+        return {"pod_id": pod_id, "action": payload.action, "host_id": host_id}
 
     def model_path():
         return catalog.manifest_file("manifests/models.yaml")

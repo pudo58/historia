@@ -1,4 +1,4 @@
-"""Read-only RunPod Pod monitoring. Never stops, starts or terminates a Pod."""
+"""RunPod Pod monitoring plus explicit, user-confirmed start/stop/terminate (REST v1)."""
 from datetime import datetime, timezone
 
 import re
@@ -25,6 +25,35 @@ async def fetch_pods(api_key: str) -> list[dict]:
         raise RunPodError(f'RunPod trả lỗi {response.status_code}.')
     data = response.json()
     return data if isinstance(data, list) else []
+
+
+POD_ACTIONS = {'stop': ('POST', '/stop'), 'start': ('POST', '/start'), 'terminate': ('DELETE', '')}
+
+
+async def pod_action(api_key: str, pod_id: str, action: str) -> None:
+    """Only called from an explicit user click; never automatic."""
+    if action not in POD_ACTIONS or not re.fullmatch(r'[a-z0-9]+', pod_id or ''):
+        raise RunPodError('Thao tác hoặc mã Pod không hợp lệ.')
+    method, suffix = POD_ACTIONS[action]
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.request(method, f'{PODS_URL}/{pod_id}{suffix}',
+                                            headers={'Authorization': f'Bearer {api_key}'})
+    except httpx.HTTPError:
+        raise RunPodError('Không kết nối được RunPod. Pod chưa bị thay đổi; kiểm tra lại trên RunPod.') from None
+    if response.status_code in (401, 403):
+        raise RunPodError('API key chỉ có quyền đọc hoặc không hợp lệ. Để dừng/xóa Pod, tạo key quyền Read/Write '
+                          'tại RunPod → Settings → API Keys rồi lưu lại trong Historia.')
+    if response.status_code == 404:
+        raise RunPodError('RunPod không còn thấy Pod này (có thể đã bị xóa).')
+    if response.status_code >= 400:
+        detail = ''
+        try:
+            body = response.json()
+            detail = str(body.get('error') or body.get('message') or '')[:200] if isinstance(body, dict) else ''
+        except ValueError:
+            pass
+        raise RunPodError(f'RunPod trả lỗi {response.status_code}. {detail}'.strip())
 
 
 def _uptime(started: str | None, now: datetime) -> int | None:

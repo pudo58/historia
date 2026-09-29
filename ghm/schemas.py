@@ -20,6 +20,12 @@ class RunPodConnect(BaseModel):
     ssh_command: str = Field(default="", max_length=500)
 
 
+class RunPodAction(BaseModel):
+    action: Literal["stop", "start", "terminate"]
+    confirm_name: str = Field(default="", max_length=200)
+    force: bool = False
+
+
 class HostKeyConfirmation(BaseModel):
     fingerprint: str = Field(min_length=1, max_length=255)
 
