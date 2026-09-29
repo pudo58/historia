@@ -151,3 +151,11 @@ def test_connection_errors_are_described():
     assert 'tên miền' in d(socket.gaierror(-2, 'x'))
     assert 'từ chối' in d(ConnectionRefusedError())
     assert 'ValueError' in d(ValueError('boom'))
+
+
+def test_ssh_errors_name_the_failing_stage():
+    import asyncssh
+
+    from ghm.services.hosts import describe_ssh_error as d
+    assert 'SSH Keys' in d(asyncssh.PermissionDenied('denied'))
+    assert 'hết thời gian' in d(TimeoutError())

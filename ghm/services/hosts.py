@@ -30,6 +30,19 @@ def describe_connection_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {str(exc)[:160] or 'không có chi tiết'}."
 
 
+def describe_ssh_error(exc: BaseException) -> str:
+    """Name the failing SSH stage so the user knows what to fix."""
+    import asyncssh
+    if isinstance(exc, asyncssh.PermissionDenied):
+        return ("máy từ chối khóa SSH. Khóa công khai trong RunPod → Settings → SSH Keys phải khớp file khóa riêng đã chọn; "
+                "Pod tạo trước khi thêm khóa cần khởi động lại.")
+    if isinstance(exc, asyncssh.HostKeyNotVerifiable):
+        return "khóa máy chủ đã đổi so với fingerprint đã tin cậy. Đọc và xác nhận lại fingerprint."
+    if isinstance(exc, ValueError) and "khóa SSH" in str(exc):
+        return str(exc)
+    return describe_connection_error(exc)
+
+
 class HostService:
     def __init__(
         self,
@@ -119,7 +132,9 @@ class HostService:
             report = evaluate((await collect(executor)).values)
         except Exception as exc:
             host.state = "unreachable"
-            host.last_error = str(exc) if isinstance(exc, PreflightTransportError) else "Không thực hiện được lệnh kiểm tra qua SSH. Chưa thể xác định GPU, RAM hoặc Python."
+            logging.getLogger(__name__).warning("Preflight failed for %s@%s:%s", host.username, host.address, host.port, exc_info=exc)
+            host.last_error = str(exc) if isinstance(exc, PreflightTransportError) else (
+                "Không thực hiện được lệnh kiểm tra qua SSH — " + describe_ssh_error(exc))
             self._save(host)
             raise RuntimeError(host.last_error) from exc
         finally:
