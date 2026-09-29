@@ -42,7 +42,7 @@ def router(service, jobs, host_lock):
         with service.sessions() as session:
             ready = bool(session.scalar(select(Installation.host_id).where(Installation.status == 'verified')))
         return {"name": "Historical Video Studio", "version": "0.4.0", "ai_ready": ready,
-                "message": "Cài bộ AI qua Full SSH trong Bộ AI & kiểm chứng. Chỉ mở tác vụ AI sau khi output kiểm chứng pass.",
+                "message": "Cài bộ AI trong Bộ AI & kiểm chứng (SSH gốc hoặc Runpod Basic SSH). Chỉ mở tác vụ AI sau khi output kiểm chứng pass.",
                 "billing_notice": "Dừng render hoặc đóng web KHÔNG dừng tính tiền GPU thuê."}
 
     @api.get('/quality-policy')

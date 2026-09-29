@@ -26,7 +26,7 @@ from ghm.recipe_runner import RecipeRunner
 from ghm import runpod
 from ghm.recipes import RecipeCatalog
 from ghm.tunnel import TunnelManager
-from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunStart, HostOptions, TokenUpdate
+from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunPodConnect, RunStart, HostOptions, TokenUpdate
 from ghm.security import SecretStore
 from ghm.services.hosts import HostService
 from ghm.manifests import load_models, load_nodes, resolve_model
@@ -333,7 +333,7 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
         except runpod.RunPodError as error:
             return {"configured": True, "pods": [], "error": str(error)}
         with sessions() as session:
-            hosts = [{"id": h.id, "label": h.label, "address": h.address, "port": h.port}
+            hosts = [{"id": h.id, "label": h.label, "address": h.address, "port": h.port, "username": h.username}
                      for h in session.query(Host).all()]
         summary = runpod.summarize(pods, hosts)
         labels = {h["id"]: h["label"] for h in hosts}
@@ -356,8 +356,10 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
         return {"ssh_key_path": path}
 
     @app.post("/api/runpod/pods/{pod_id}/connect")
-    async def connect_runpod_pod(pod_id: str):
-        """Create (or re-point) the Historia SSH host for a running Pod. Never trusts the host key by itself."""
+    async def connect_runpod_pod(pod_id: str, payload: RunPodConnect | None = None):
+        """Create (or re-point) the Historia host for a running Pod: direct SSH when the Pod exposes TCP 22,
+        otherwise RunPod's Basic-SSH gateway. Never trusts the host key by itself."""
+        payload = payload or RunPodConnect()
         key = service.setting("runpod_api_key")
         key_path = service.setting("runpod_ssh_key_path")
         if not key:
@@ -368,14 +370,24 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             pods = await runpod.fetch_pods(key)
         except runpod.RunPodError as error:
             raise HTTPException(502, str(error)) from error
-        pod = next((p for p in runpod.summarize(pods, [])["pods"] if p["id"] == pod_id), None)
-        if pod is None:
+        raw = next((p for p in pods if p.get("id") == pod_id), None)
+        if raw is None:
             raise HTTPException(404, "Không thấy Pod này trên RunPod.")
-        if not pod["ssh_ready"]:
-            raise HTTPException(409, "Pod chưa chạy hoặc chưa mở cổng SSH (22). Chờ Pod khởi động xong rồi thử lại.")
-        address, port = pod["public_ip"], int(pod["ssh_port"])
+        pod = runpod.summarize([raw], [])["pods"][0]
+        if pod["status"] != "RUNNING":
+            raise HTTPException(409, "Pod chưa chạy. Bật Pod rồi thử lại.")
+        if payload.mode == "direct" or (payload.mode == "auto" and pod["ssh_ready"]):
+            if not pod["ssh_ready"]:
+                raise HTTPException(409, "Pod chưa có IP/cổng SSH (TCP 22). Chờ khởi động xong hoặc nối qua proxy.")
+            address, port, username = pod["public_ip"], int(pod["ssh_port"]), "root"
+        else:
+            username = runpod.proxy_username(raw, payload.ssh_command)
+            if not username:
+                raise HTTPException(409, "Cần lệnh SSH ở tab Connect của Pod (dạng ssh <pod-id>-<mã>@ssh.runpod.io ...) để nối qua proxy.")
+            address, port = runpod.PROXY_HOST, 22
         with sessions() as session:
-            existing = next((h.id for h in session.query(Host).all() if h.address == address and h.port == port), None)
+            existing = next((h.id for h in session.query(Host).all()
+                             if h.address == address and h.port == port and h.username == username), None)
         if existing:
             service.save_setting(f"runpod_pod_host:{pod_id}", existing)
             return {"host": _to_read(service._require_host(existing), service), "action": "already_connected"}
@@ -384,10 +396,10 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             async with host_lock(linked):
                 runner.assert_idle(linked)
                 await tunnels.stop(linked)
-                host = service.update_host(linked, HostUpdate(address=address, port=port))
+                host = service.update_host(linked, HostUpdate(address=address, port=port, username=username))
             return {"host": _to_read(host, service), "action": "address_updated"}
         host = service.create_host(HostCreate(label=pod["name"] or pod_id, address=address, port=port,
-                                              username="root", auth_kind="private_key", secret=key_path))
+                                              username=username, auth_kind="private_key", secret=key_path))
         service.save_setting(f"runpod_pod_host:{pod_id}", host.id)
         return {"host": _to_read(host, service), "action": "created"}
 

@@ -1,9 +1,12 @@
 """Read-only RunPod Pod monitoring. Never stops, starts or terminates a Pod."""
 from datetime import datetime, timezone
 
+import re
+
 import httpx
 
 PODS_URL = 'https://rest.runpod.io/v1/pods'
+PROXY_HOST = 'ssh.runpod.io'
 
 
 class RunPodError(Exception):
@@ -36,6 +39,18 @@ def _uptime(started: str | None, now: datetime) -> int | None:
     return max(0, int((now - when).total_seconds()))
 
 
+def proxy_username(pod: dict, pasted: str = '') -> str | None:
+    """Basic-SSH gateway user ('<pod-id>-<hash>'): from the API when exposed, else parsed from the pasted Connect command."""
+    pod_id = pod.get('id') or ''
+    candidates = [((pod.get('machine') or {}).get('podHostId')), pod.get('podHostId')]
+    match = re.search(r'([A-Za-z0-9_-]+)@ssh\.runpod\.io', pasted or '')
+    candidates.append(match.group(1) if match else (pasted or '').strip())
+    for value in candidates:
+        if isinstance(value, str) and re.fullmatch(r'[a-z0-9]+-[a-z0-9]+', value) and value.startswith(pod_id + '-'):
+            return value
+    return None
+
+
 def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) -> dict:
     """hosts: [{'id','label','address','port'}]. Matches a Pod to a Historia host by SSH ip:port."""
     now = now or datetime.now(timezone.utc)
@@ -45,6 +60,9 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
         ssh_port = ports.get('22')
         ip = pod.get('publicIp')
         host = next((h for h in hosts if ip and ssh_port and h['address'] == ip and int(h['port']) == int(ssh_port)), None)
+        if host is None:
+            host = next((h for h in hosts if h['address'].lower().rstrip('.') == PROXY_HOST
+                         and str(h.get('username', '')).startswith(f"{pod.get('id')}-")), None)
         status = pod.get('desiredStatus') or 'UNKNOWN'
         running = status == 'RUNNING'
         gpu = pod.get('gpu') or {}
@@ -60,6 +78,7 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
             'public_ip': ip, 'ssh_port': ssh_port,
             'host_id': host['id'] if host else None, 'host_label': host['label'] if host else None,
             'ssh_ready': bool(running and ip and ssh_port),
+            'proxy_username': proxy_username(pod) if running else None,
         })
     running = [p for p in result if p['status'] == 'RUNNING']
     return {'pods': result, 'running_count': len(running),

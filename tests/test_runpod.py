@@ -103,3 +103,41 @@ def test_connect_rejects_pod_without_ssh(client, monkeypatch, tmp_path):
     assert client.post('/api/runpod/pods/nossh/connect').status_code == 409
     assert client.post('/api/runpod/pods/def/connect').status_code == 409
     assert client.post('/api/runpod/pods/none/connect').status_code == 404
+
+
+PROXY_POD = {'id': '89m3wc8ffwy6na', 'name': 'guilty_amaranth_bee', 'desiredStatus': 'RUNNING', 'costPerHr': 0.28,
+             'publicIp': '', 'portMappings': {}}
+COMMAND = 'ssh 89m3wc8ffwy6na-64411bc2@ssh.runpod.io -i ~/.ssh/id_ed25519'
+
+
+def test_proxy_connect_from_pasted_command(client, monkeypatch, tmp_path):
+    key = _configure(client, monkeypatch, tmp_path, [PROXY_POD])
+    client.post('/api/settings/runpod-ssh-key', json={'token': str(key)})
+    body = client.post('/api/runpod/pods/89m3wc8ffwy6na/connect')
+    assert body.status_code == 409 and 'lệnh SSH' in body.json()['detail']
+    wrong = client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'ssh_command': 'ssh otherpod-abc123@ssh.runpod.io'})
+    assert wrong.status_code == 409
+    assert client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'mode': 'direct'}).status_code == 409
+    created = client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'ssh_command': COMMAND}).json()
+    host = created['host']
+    assert created['action'] == 'created' and (host['address'], host['port'], host['username']) == ('ssh.runpod.io', 22, '89m3wc8ffwy6na-64411bc2')
+    assert host['pinned_fingerprint'] is None
+    listing = client.get('/api/runpod/pods').json()['pods'][0]
+    assert listing['host_id'] == host['id'] and listing['host_label'] == 'guilty_amaranth_bee'
+    assert client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'ssh_command': COMMAND}).json()['action'] == 'already_connected'
+
+
+def test_proxy_username_from_api_and_direct_preferred(client, monkeypatch, tmp_path):
+    exposed = {**PROXY_POD, 'machine': {'podHostId': '89m3wc8ffwy6na-aaaa1111'}}
+    key = _configure(client, monkeypatch, tmp_path, [exposed])
+    client.post('/api/settings/runpod-ssh-key', json={'token': str(key)})
+    assert client.get('/api/runpod/pods').json()['pods'][0]['proxy_username'] == '89m3wc8ffwy6na-aaaa1111'
+    assert client.post('/api/runpod/pods/89m3wc8ffwy6na/connect').json()['host']['username'] == '89m3wc8ffwy6na-aaaa1111'
+    # A Pod that also exposes TCP 22 connects directly in auto mode.
+    both = {**POD, 'id': 'dual1', 'publicIp': '5.5.5.5', 'portMappings': {'22': 43000}, 'machine': {'podHostId': 'dual1-bbbb2222'}}
+
+    async def fake(_key):
+        return [both]
+    monkeypatch.setattr(runpod, 'fetch_pods', fake)
+    direct = client.post('/api/runpod/pods/dual1/connect').json()['host']
+    assert (direct['address'], direct['port'], direct['username']) == ('5.5.5.5', 43000, 'root')

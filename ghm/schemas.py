@@ -15,6 +15,11 @@ class HostCreate(BaseModel):
     secret: str = Field(min_length=1)
 
 
+class RunPodConnect(BaseModel):
+    mode: Literal["auto", "direct", "proxy"] = "auto"
+    ssh_command: str = Field(default="", max_length=500)
+
+
 class HostKeyConfirmation(BaseModel):
     fingerprint: str = Field(min_length=1, max_length=255)
 
