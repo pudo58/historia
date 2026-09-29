@@ -23,6 +23,7 @@ from ghm.executors.base import Executor
 from ghm.executors.ssh import SSHExecutor
 from ghm.models import Host
 from ghm.recipe_runner import RecipeRunner
+from ghm import runpod
 from ghm.recipes import RecipeCatalog
 from ghm.tunnel import TunnelManager
 from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunStart, HostOptions, TokenUpdate
@@ -312,6 +313,7 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
     @app.get("/api/settings")
     def get_settings():
         return {"hf_token_configured": bool(service.setting("hf_token")),
+                "runpod_configured": bool(service.setting("runpod_api_key")),
                 "nodes_editable_in_ui": False, "manifests_directory": str(config.recipes_dir.parent / "manifests")}
 
     @app.post("/api/settings/hf-token")
@@ -320,6 +322,27 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             raise HTTPException(422, "Enter a valid read-only Hugging Face token, or an empty value to remove it.")
         service.save_setting("hf_token", payload.token)
         return {"hf_token_configured": bool(payload.token)}
+
+    @app.get("/api/runpod/pods")
+    async def runpod_pods():
+        key = service.setting("runpod_api_key")
+        if not key:
+            return {"configured": False, "pods": []}
+        try:
+            pods = await runpod.fetch_pods(key)
+        except runpod.RunPodError as error:
+            return {"configured": True, "pods": [], "error": str(error)}
+        with sessions() as session:
+            hosts = [{"id": h.id, "label": h.label, "address": h.address, "port": h.port}
+                     for h in session.query(Host).all()]
+        return {"configured": True, **runpod.summarize(pods, hosts)}
+
+    @app.post("/api/settings/runpod-key")
+    def save_runpod_key(payload: TokenUpdate):
+        if payload.token and (len(payload.token) < 16 or any(c.isspace() for c in payload.token)):
+            raise HTTPException(422, "Nhập RunPod API key hợp lệ, hoặc để trống để xóa.")
+        service.save_setting("runpod_api_key", payload.token)
+        return {"runpod_configured": bool(payload.token)}
 
     def model_path():
         return catalog.manifest_file("manifests/models.yaml")
