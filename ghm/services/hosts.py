@@ -1,3 +1,6 @@
+import asyncio
+import logging
+import socket
 from collections.abc import Callable
 
 import json
@@ -12,6 +15,19 @@ from ghm.preflight import collect, evaluate
 from ghm.schemas import HostCreate, HostUpdate, PreflightReport, StoredPreflightReport, HostOptions
 from ghm.security import SecretStore
 from ghm.executors.pty_probe import PreflightTransportError
+
+
+def describe_connection_error(exc: BaseException) -> str:
+    """Actionable, secret-free reason for a failed SSH connection attempt."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "hết thời gian chờ. Mạng, VPN hoặc tường lửa có thể đang chặn cổng đi ra này (thử mạng khác)."
+    if isinstance(exc, socket.gaierror):
+        return "không phân giải được tên miền. Kiểm tra mạng/DNS."
+    if isinstance(exc, ConnectionRefusedError):
+        return "máy từ chối kết nối (cổng đóng hoặc Pod chưa sẵn sàng)."
+    if isinstance(exc, OSError):
+        return f"lỗi mạng ({exc.strerror or type(exc).__name__})."
+    return f"{type(exc).__name__}: {str(exc)[:160] or 'không có chi tiết'}."
 
 
 class HostService:
@@ -145,7 +161,9 @@ class HostService:
             return host
         except Exception as exc:
             host.state = "unreachable"
-            host.last_error = "Could not reach this host to inspect its SSH key."
+            logging.getLogger(__name__).warning("SSH key inspection failed for %s:%s", host.address, host.port, exc_info=exc)
+            host.last_error = (f"Không kết nối được tới {host.address}:{host.port} để đọc khóa SSH — "
+                               + describe_connection_error(exc))
             self._save(host)
             raise RuntimeError(host.last_error) from exc
         finally:

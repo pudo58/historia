@@ -141,3 +141,13 @@ def test_proxy_username_from_api_and_direct_preferred(client, monkeypatch, tmp_p
     monkeypatch.setattr(runpod, 'fetch_pods', fake)
     direct = client.post('/api/runpod/pods/dual1/connect').json()['host']
     assert (direct['address'], direct['port'], direct['username']) == ('5.5.5.5', 43000, 'root')
+
+
+def test_connection_errors_are_described():
+    import socket
+
+    from ghm.services.hosts import describe_connection_error as d
+    assert 'chặn' in d(TimeoutError())
+    assert 'tên miền' in d(socket.gaierror(-2, 'x'))
+    assert 'từ chối' in d(ConnectionRefusedError())
+    assert 'ValueError' in d(ValueError('boom'))
