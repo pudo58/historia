@@ -95,10 +95,15 @@ def router(service, jobs, host_lock):
         if not host_id:
             return {'state': 'unknown', 'reason': 'Chưa chọn Pod.'}
         with service.sessions() as session:
-            rows = list(session.scalars(select(Job).where(Job.host_id == host_id)))
+            from ghm.models import Host
+            me = session.get(Host, host_id)
+            # GPU lanes of one Pod share the rental: the Pod is idle only when every lane is.
+            siblings = {host_id} | ({h.id for h in session.scalars(select(Host).where(
+                Host.address == me.address, Host.port == me.port, Host.username == me.username))} if me else set())
+            rows = list(session.scalars(select(Job).where(Job.host_id.in_(siblings))))
             runs = [run for run in session.scalars(select(ProductionRun))
-                    if run.snapshot.get('host_id') == host_id or
-                    host_id in ((run.consent or {}).get('parallel_host_ids') or [])]
+                    if run.snapshot.get('host_id') in siblings or
+                    siblings & set((run.consent or {}).get('parallel_host_ids') or [])]
         def unresolved(result):
             return bool(result.get('maintenance_pending') or result.get('speech_pending') or
                 result.get('outline_pending') or result.get('chapter_pending') is not None or

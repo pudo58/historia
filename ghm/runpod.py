@@ -88,10 +88,12 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
         ports = pod.get('portMappings') or {}
         ssh_port = ports.get('22')
         ip = pod.get('publicIp')
-        host = next((h for h in hosts if ip and ssh_port and h['address'] == ip and int(h['port']) == int(ssh_port)), None)
-        if host is None:
-            host = next((h for h in hosts if h['address'].lower().rstrip('.') == PROXY_HOST
-                         and str(h.get('username', '')).startswith(f"{pod.get('id')}-")), None)
+        # A multi-GPU Pod can have several Historia hosts ("lanes") on one SSH endpoint.
+        matched = [h for h in hosts if ip and ssh_port and h['address'] == ip and int(h['port']) == int(ssh_port)]
+        if not matched:
+            matched = [h for h in hosts if h['address'].lower().rstrip('.') == PROXY_HOST
+                       and str(h.get('username', '')).startswith(f"{pod.get('id')}-")]
+        host = matched[0] if matched else None
         status = pod.get('desiredStatus') or 'UNKNOWN'
         running = status == 'RUNNING'
         gpu = pod.get('gpu') or {}
@@ -106,6 +108,7 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
             'session_cost': cost * seconds / 3600 if cost is not None and seconds is not None else None,
             'public_ip': ip, 'ssh_port': ssh_port,
             'host_id': host['id'] if host else None, 'host_label': host['label'] if host else None,
+            'host_ids': [h['id'] for h in matched],
             'ssh_ready': bool(running and ip and ssh_port),
             'proxy_username': proxy_username(pod) if running else None,
         })

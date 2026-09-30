@@ -7,7 +7,7 @@ import { navigate } from './workspace';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 type Host = {id:string; label:string; address:string; port:number; username:string; pinned_fingerprint?:string; gpu?:{name:string;vram_gb:number}};
-type Options = {root:string; remote_port:number; adopt_existing:boolean; comfy_path?:string|null; recheck_models?:boolean};
+type Options = {root:string; remote_port:number; adopt_existing:boolean; comfy_path?:string|null; recheck_models?:boolean; gpu_index?:number|null};
 type Discovery = {paths:string[];services:{port:number;version:string}[];suggested_options:Options;transport:string};
 type Plan = {plan_id:string; options:Options; missing_bytes:number; required_bytes:number; reserve_bytes:number; valid_files:number; blockers:string[]; inventory:{free_bytes:number;filesystem_path:string;comfy_exists:boolean}; lock:{models:{name:string;repo:string;filename:string;size_bytes:number;revision:string}[]; snapshots:{name:string;repo:string;size_bytes:number;revision:string}[]; environments:Record<string,string>}};
 type Job = {id:string; kind:string;status:string;progress:number;error?:string;result:{artifact_ids?:string[];elapsed_seconds?:number}};
@@ -60,7 +60,7 @@ function HostInstall({host}:{host:Host}){
   const options=edited || plan?.options || {root:'/workspace/historia',remote_port:8190,adopt_existing:false};
   const working=state.data?.jobs.some(j=>active.includes(j.status));
   const basic=host.address.toLowerCase().replace(/\.$/,'')==='ssh.runpod.io';
-  const matching=plan && plan.options.root===options.root && plan.options.remote_port===options.remote_port && plan.options.adopt_existing===options.adopt_existing && (plan.options.comfy_path || null)===(options.comfy_path || null) && !!plan.options.recheck_models===!!options.recheck_models;
+  const matching=plan && plan.options.root===options.root && plan.options.remote_port===options.remote_port && plan.options.adopt_existing===options.adopt_existing && (plan.options.comfy_path || null)===(options.comfy_path || null) && !!plan.options.recheck_models===!!options.recheck_models && (plan.options.gpu_index ?? null)===(options.gpu_index ?? null);
   const run=async<T,>(fn:()=>Promise<T>):Promise<T|undefined>=>{setBusy(true);setError('');try{const v=await fn();await client.invalidateQueries();return v;}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
   const change=(next:Options)=>{setOptions(next);setConsent(false);};
   return <>
@@ -98,7 +98,7 @@ function HostInstall({host}:{host:Host}){
     </section>
     {!plan && <section className="panel"><h2>2. Bộ AI sẽ cài</h2><p>Qwen3-VL 8B (tư liệu/kịch bản), Qwen-Image và Edit-2509 (ảnh), Wan2.2 I2V A14B (clip), VieNeu 0.5B (giọng Việt), ComfyUI và dependency cần thiết.</p><p>Hoàn tất bước 1 để xem dung lượng, revision và license. Chưa có bản xem trước nên chưa thể bắt đầu tải/cài.</p></section>}
     {plan && <section className="panel"><h2>2. Xem trước & xác nhận cài</h2>{!matching && <div className="alert warning">Đang hiển thị bản xem trước đã lưu cho {plan.options.root}:{plan.options.remote_port}. Thông số form đã khác.<button onClick={()=>change(plan.options)}>Dùng thông số đã lưu</button></div>}
-      <p><strong>{plan.options.adopt_existing?'Tái sử dụng':'Cài riêng'} ComfyUI: </strong>{plan.options.comfy_path || plan.options.root+'/ComfyUI'} · port {plan.options.remote_port}. Dịch vụ LLM/TTS riêng tại {plan.options.root}.</p>
+      <p><strong>{plan.options.adopt_existing?'Tái sử dụng':'Cài riêng'} ComfyUI: </strong>{plan.options.comfy_path || plan.options.root+'/ComfyUI'} · port {plan.options.remote_port}{plan.options.gpu_index!=null&&` · ghim GPU ${plan.options.gpu_index}, dùng chung model với GPU 0`}. Dịch vụ LLM/TTS riêng tại {plan.options.root}.</p>
       <div className="stats"><div><strong>{gb(plan.missing_bytes)}</strong><span>Model còn cần tải</span></div><div><strong>{gb(plan.inventory.free_bytes)}</strong><span>Ổ trống tại {plan.inventory.filesystem_path}</span></div><div><strong>{gb(plan.required_bytes)}</strong><span>Cần trống · gồm dự phòng {gb(plan.reserve_bytes)}</span></div><div><strong>{plan.valid_files}</strong><span>File đúng checksum được giữ</span></div></div>
       <p>Dự phòng dành cho Python, dependency, cache và output; không phải dung lượng tải chính xác của pip. Bộ AI: Qwen3-VL 8B, Qwen-Image/Edit-2509, Wan2.2 I2V A14B và VieNeu 0.5B. Không cài mọi model trên ComfyUI.</p>
       {plan.blockers.map(b=><ErrorDetail message={b} key={b}/>)}

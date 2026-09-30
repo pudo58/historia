@@ -10,7 +10,7 @@ export default function PodIdleBanner({projectId}:{projectId:string}){
   const value=query.data;
   if(!value||value.state==='busy'||value.state==='recent')return null;
   if(value.state==='unknown')return <p className="work-footnote">{value.reason}</p>;
-  const pod=pods?.configured&&!pods.error?pods.pods.find(p=>p.status==='RUNNING'&&p.host_id&&p.host_id===value.host_id):undefined;
+  const pod=pods?.configured&&!pods.error?pods.pods.find(p=>p.status==='RUNNING'&&!!value.host_id&&(p.host_ids||[p.host_id]).includes(value.host_id)):undefined;
   const rate=pod?.cost_per_hr??value.hourly_usd;
   return <aside className="work-error-box" role="status"><strong>Pod nhàn rỗi hơn 10 phút.</strong> {value.reason} Nếu không còn việc khác trên Pod, mở RunPod để dừng Pod. {pod&&<>Pod {pod.name||pod.id} đã chạy {uptime(pod.uptime_seconds)}, đã tốn {money(pod.session_cost)}. </>}{rate!=null&&<>{pod?'Giá RunPod':'Giá bạn nhập'}: {money(rate)}/giờ; thêm 10 phút khoảng {money(rate/6)} tiền thuê Pod.</>} <a href="https://www.runpod.io/console/pods" target="_blank" rel="noreferrer">Mở RunPod ↗</a></aside>;
 }

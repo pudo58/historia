@@ -355,6 +355,13 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
         service.save_setting("hf_token", payload.token)
         return {"hf_token_configured": bool(payload.token)}
 
+    def saved_lanes(pod_id: str) -> list[str]:
+        try:
+            value = json.loads(service.setting(f"runpod_pod_lanes:{pod_id}") or "[]")
+        except ValueError:
+            return []
+        return [x for x in value if isinstance(x, str)]
+
     @app.get("/api/runpod/pods")
     async def runpod_pods():
         key = service.setting("runpod_api_key")
@@ -373,6 +380,8 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             linked = service.setting(f"runpod_pod_host:{pod['id']}")
             pod["linked_host_id"] = linked if linked in labels and not pod["host_id"] else None
             pod["linked_host_label"] = labels.get(pod["linked_host_id"])
+            pod["lanes"] = [{"host_id": hid, "label": labels[hid], "index": i}
+                            for i, hid in enumerate(saved_lanes(pod["id"])) if hid in labels]
         return {"configured": True, "ssh_key_path": service.setting("runpod_ssh_key_path") or "", **summary}
 
     def normalize_key_path(raw: str) -> str:
@@ -418,22 +427,53 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                 raise HTTPException(409, "Cần lệnh SSH ở tab Connect của Pod (dạng ssh <pod-id>-<mã>@ssh.runpod.io ...) để nối qua proxy.")
             address, port = runpod.PROXY_HOST, 22
         with sessions() as session:
-            existing = next((h.id for h in session.query(Host).all()
-                             if h.address == address and h.port == port and h.username == username), None)
+            same = [h.id for h in session.query(Host).order_by(Host.created_at).all()
+                    if h.address == address and h.port == port and h.username == username]
+        linked = service.setting(f"runpod_pod_host:{pod_id}")
+        existing = linked if linked in same else (same[0] if same else None)
+        action = "already_connected"
         if existing:
             service.save_setting(f"runpod_pod_host:{pod_id}", existing)
-            return {"host": _to_read(service._require_host(existing), service), "action": "already_connected"}
-        linked = service.setting(f"runpod_pod_host:{pod_id}")
-        if linked and service.get_host(linked):
+            first = existing
+        elif linked and service.get_host(linked):
             async with host_lock(linked):
                 runner.assert_idle(linked)
                 await tunnels.stop(linked)
-                host = service.update_host(linked, HostUpdate(address=address, port=port, username=username))
-            return {"host": _to_read(host, service), "action": "address_updated"}
-        host = service.create_host(HostCreate(label=pod["name"] or pod_id, address=address, port=port,
-                                              username=username, auth_kind="private_key", secret=key_path))
-        service.save_setting(f"runpod_pod_host:{pod_id}", host.id)
-        return {"host": _to_read(host, service), "action": "created"}
+                service.update_host(linked, HostUpdate(address=address, port=port, username=username))
+            first, action = linked, "address_updated"
+        else:
+            created = service.create_host(HostCreate(label=pod["name"] or pod_id, address=address, port=port,
+                                                     username=username, auth_kind="private_key", secret=key_path))
+            service.save_setting(f"runpod_pod_host:{pod_id}", created.id)
+            first, action = created.id, "created"
+        gpus = int(pod.get("gpu_count") or 1)
+        lanes = await ensure_lanes(pod_id, first, gpus if payload.all_gpus else 1, pod["name"] or pod_id,
+                                   (address, port, username), key_path)
+        return {"host": _to_read(service._require_host(first), service), "action": action,
+                "lanes": [_to_read(service._require_host(hid), service) for hid in lanes]}
+
+    async def ensure_lanes(pod_id: str, first: str, wanted: int, base_label: str, endpoint, key_path: str) -> list[str]:
+        """One Historia host per GPU of a Pod. They share the SSH endpoint and (later) the install root;
+        lane i>0 gets its own ComfyUI port and is pinned to GPU i when installed."""
+        address, port, username = endpoint
+        lanes = [x for x in saved_lanes(pod_id) if service.get_host(x)]
+        if not lanes or lanes[0] != first:
+            lanes = [first]
+        while wanted > 1 and len(lanes) < wanted:
+            index = len(lanes)
+            host = service.create_host(HostCreate(label=f"{base_label} · GPU {index}", address=address, port=port,
+                                                  username=username, auth_kind="private_key", secret=key_path))
+            lanes.append(host.id)
+        for index, host_id in enumerate(lanes):
+            host = service._require_host(host_id)
+            if (host.address, host.port, host.username) != (address, port, username):
+                async with host_lock(host_id):
+                    runner.assert_idle(host_id)
+                    await tunnels.stop(host_id)
+                    service.update_host(host_id, HostUpdate(address=address, port=port, username=username))
+            service.save_setting(f"host_lane:{host_id}", json.dumps({"pod_id": pod_id, "index": index, "first": first}))
+        service.save_setting(f"runpod_pod_lanes:{pod_id}", json.dumps(lanes))
+        return lanes
 
     @app.post("/api/settings/runpod-key")
     def save_runpod_key(payload: TokenUpdate):
@@ -463,12 +503,14 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                      for h in session.query(Host).all()]
         pod = runpod.summarize([raw], hosts)["pods"][0]
         host_id = pod["host_id"] or service.setting(f"runpod_pod_host:{pod_id}")
-        if payload.action != "start" and host_id and not payload.force:
+        # Every GPU lane on this Pod counts, not only the first host that happens to match.
+        host_ids = {x for x in [*pod.get("host_ids", []), host_id, *saved_lanes(pod_id)] if x}
+        if payload.action != "start" and host_ids and not payload.force:
             from sqlalchemy import select
             from studio.jobs import ACTIVE
             from studio.models import Job
             with app.state.studio.sessions() as session:
-                busy = session.scalar(select(Job.id).where(Job.host_id == host_id, Job.status.in_(ACTIVE)))
+                busy = session.scalar(select(Job.id).where(Job.host_id.in_(host_ids), Job.status.in_(ACTIVE)))
             if busy:
                 raise HTTPException(409, "Historia còn tác vụ đang chạy hoặc chờ trên Pod này. "
                                          "Dừng/tạm dừng tác vụ trước, hoặc xác nhận dừng Pod dù đang có việc.")
@@ -478,6 +520,7 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             raise HTTPException(502, str(error)) from error
         if payload.action == "terminate":
             service.save_setting(f"runpod_pod_host:{pod_id}", "")
+            service.save_setting(f"runpod_pod_lanes:{pod_id}", "")
         return {"pod_id": pod_id, "action": payload.action, "host_id": host_id}
 
     def model_path():

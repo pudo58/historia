@@ -85,6 +85,21 @@ class Installations:
             return True
         return False
 
+    def lane(self, host_id):
+        """{'pod_id','index','first'} when this host is one GPU of a multi-GPU Pod, else None."""
+        try:
+            value = json.loads(self.hosts.setting(f'host_lane:{host_id}') or 'null')
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) and isinstance(value.get('index'), int) and value.get('first') else None
+
+    def lanes_of(self, pod_id):
+        try:
+            value = json.loads(self.hosts.setting(f'runpod_pod_lanes:{pod_id}') or '[]')
+        except ValueError:
+            return []
+        return [x for x in value if isinstance(x, str)]
+
     def require_transport(self, host_id):
         host = self.hosts._require_host(host_id)
         if not host.pinned_fingerprint:
@@ -104,6 +119,19 @@ class Installations:
         self.jobs.recipes.assert_idle(host_id)
         await self.hosts.preflight(host_id)
         host = self.require_transport(host_id)
+        lane = self.lane(host_id)
+        if lane and lane['index'] >= 1:
+            # Extra GPU of a multi-GPU Pod: same install root as GPU 0, its own port, pinned to its GPU.
+            base = self.hosts.options_for(lane['first'])
+            if base.adopt_existing:
+                raise ValueError('GPU 0 đang dùng ComfyUI có sẵn của Pod (chế độ adopt) nên không chia GPU được. '
+                                 'Cài lại GPU 0 ở chế độ Historia tự quản lý ComfyUI rồi thử lại.')
+            if self.state(lane['first']).get('status') not in {'installed', 'verifying', 'verified', 'verify_failed'}:
+                raise ValueError('Cài bộ AI cho GPU 0 của Pod này trước. GPU 1+ dùng chung thư mục model nên chỉ cài thêm rất nhanh sau đó.')
+            options = HostOptions(root=base.root, adopt_existing=False, gpu_index=lane['index'],
+                                  remote_port=base.remote_port + lane['index'])
+            return {'paths': [], 'services': [], 'suggested_options': options.model_dump(), 'lane': lane,
+                    'transport': 'ssh', 'gpu': self.hosts.latest_preflight(host_id).gpu.model_dump()}
         executor = self.hosts.executor_for(host)
         try:
             script = "import json,pathlib; print(json.dumps([p for p in ['/ComfyUI','/workspace/ComfyUI','/workspace/comfyui','/opt/ComfyUI'] if (pathlib.Path(p)/'main.py').is_file()]))"
@@ -122,7 +150,9 @@ class Installations:
                             running.append({'port': port, 'version': version})
                 except (ConnectionError, ValueError, httpx.HTTPError):
                     pass
-            adopt = len(paths) == 1 and len(running) == 1
+            # Sharing a Pod between GPUs needs our own managed ComfyUI, not the template's single instance.
+            shared = bool(lane) and len(self.lanes_of(lane['pod_id'])) > 1
+            adopt = len(paths) == 1 and len(running) == 1 and not shared
             options = HostOptions(root='/workspace/historia', adopt_existing=adopt,
                                   comfy_path=paths[0] if adopt else None,
                                   remote_port=running[0]['port'] if adopt else 8190)
