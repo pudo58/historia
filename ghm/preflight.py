@@ -55,7 +55,7 @@ def parse_nvidia_smi(output: str, cuda_output: str = "") -> GPUInfo | None:
     cuda_match = re.search(r"release\s+([\d.]+)", cuda_output)
     listed = len(re.findall(r"^GPU\s+\d+:", output, re.MULTILINE))
     return GPUInfo(
-        count=max(1, listed),
+        count=listed or None,
         name=fields[0],
         vram_gb=vram_gb,
         driver_version=fields[2],

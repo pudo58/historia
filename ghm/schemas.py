@@ -89,7 +89,8 @@ class GPUInfo(BaseModel):
     driver_version: str
     compute_capability: str | None = None
     cuda_version: str | None = None
-    count: int = 1
+    # Number of GPUs `nvidia-smi -L` listed; None for reports made before this was recorded.
+    count: int | None = None
 
 
 class DiskInfo(BaseModel):

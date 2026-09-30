@@ -76,7 +76,7 @@ def test_gpu_index_validation_and_gpu_count():
                'GPU 0: NVIDIA A100 80GB PCIe (UUID: GPU-a)\nGPU 1: NVIDIA A100 80GB PCIe (UUID: GPU-b)\n')
     assert parse_nvidia_smi(listing).count == 2
     assert parse_nvidia_smi('NVIDIA A100, 81920, 570.86, 8.0\nGPU 0: NVIDIA A100 (UUID: GPU-a)\n').count == 1
-    assert parse_nvidia_smi('NVIDIA A100, 81920, 570.86, 8.0\n').count == 1
+    assert parse_nvidia_smi('NVIDIA A100, 81920, 570.86, 8.0\n').count is None   # older/unlisted: unknown, not "1"
 
 
 TWO = {'id': 'duo', 'name': 'two-a100', 'desiredStatus': 'RUNNING', 'costPerHr': 3.21,
@@ -193,3 +193,31 @@ def test_pod_idle_waits_for_every_gpu(client):
         session.commit()
     advice = client.get(f"/api/studio/projects/{project['id']}/pod-idle").json()
     assert advice['state'] == 'busy', advice
+
+
+def test_gpu_count_comes_from_the_machine_when_runpod_omits_it(client, monkeypatch):
+    """RunPod sometimes returns no GPU block; connect must ask the machine (nvidia-smi) instead of assuming one GPU."""
+    bare = {k: v for k, v in TWO.items() if k != 'gpu'}
+
+    async def pods(_key):
+        return [bare]
+    monkeypatch.setattr(runpod, 'fetch_pods', pods)
+    first = client.post('/api/runpod/pods/duo/connect').json()['host']
+    hosts = client.app.state.host_service
+    host = hosts._require_host(first['id'])
+    host.pinned_fingerprint = 'SHA256:x'
+    hosts._save(host)
+    listing = client.get('/api/runpod/pods').json()['pods'][0]
+    assert listing['gpu_count_known'] is False and listing['gpu_count'] is None
+
+    async def preflight(host_id):
+        with hosts._sessions() as session:
+            session.add(PreflightSnapshot(host_id=host_id, status='pass', payload=json.dumps({
+                'status': 'pass', 'ssh_mode': 'exec', 'checks': [],
+                'gpu': {'name': 'A40', 'vram_gb': 45, 'driver_version': '570.1', 'count': 2}})))
+            session.commit()
+    monkeypatch.setattr(hosts, 'preflight', preflight)
+    result = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True}).json()
+    assert [h['label'] for h in result['lanes']] == ['two-a100', 'two-a100 · GPU 1']
+    listing = client.get('/api/runpod/pods').json()['pods'][0]
+    assert listing['gpu_count_known'] is True and listing['gpu_count'] == 2 and listing['gpu'] == 'A40'

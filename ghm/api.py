@@ -362,6 +362,16 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             return []
         return [x for x in value if isinstance(x, str)]
 
+    def ssh_gpu(host_ids):
+        for host_id in host_ids:
+            try:
+                report = service.latest_preflight(host_id)
+            except KeyError:
+                continue
+            if report and report.gpu:
+                return report.gpu
+        return None
+
     @app.get("/api/runpod/pods")
     async def runpod_pods():
         key = service.setting("runpod_api_key")
@@ -382,6 +392,11 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             pod["linked_host_label"] = labels.get(pod["linked_host_id"])
             pod["lanes"] = [{"host_id": hid, "label": labels[hid], "index": i}
                             for i, hid in enumerate(saved_lanes(pod["id"])) if hid in labels]
+            # RunPod's API sometimes omits the GPU block; the machine's own nvidia-smi is the truth.
+            seen = ssh_gpu(pod["host_ids"][:1] or ([pod["linked_host_id"]] if pod["linked_host_id"] else []))
+            pod["gpu_count_known"] = bool(pod["gpu_count"] or (seen and seen.count))
+            pod["gpu_count"] = pod["gpu_count"] or (seen.count if seen else None)
+            pod["gpu"] = pod["gpu"] or (seen.name if seen else None)
         return {"configured": True, "ssh_key_path": service.setting("runpod_ssh_key_path") or "", **summary}
 
     def normalize_key_path(raw: str) -> str:
@@ -446,7 +461,16 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                                                      username=username, auth_kind="private_key", secret=key_path))
             service.save_setting(f"runpod_pod_host:{pod_id}", created.id)
             first, action = created.id, "created"
-        gpus = int(pod.get("gpu_count") or 1)
+        gpus = int(pod.get("gpu_count") or 0)
+        seen = ssh_gpu([first])
+        if payload.all_gpus and not gpus and not (seen and seen.count) and service.get_host(first).pinned_fingerprint:
+            # RunPod did not say how many GPUs; ask the machine itself.
+            try:
+                await service.preflight(first)
+            except Exception:  # noqa: BLE001 -- best effort; we simply fall back to one lane
+                pass
+            seen = ssh_gpu([first])
+        gpus = max(gpus, (seen.count if seen and seen.count else 0), 1)
         lanes = await ensure_lanes(pod_id, first, gpus if payload.all_gpus else 1, pod["name"] or pod_id,
                                    (address, port, username), key_path)
         return {"host": _to_read(service._require_host(first), service), "action": action,
