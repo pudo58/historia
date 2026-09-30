@@ -3,11 +3,14 @@ import json
 import shlex
 
 from ghm.manifests import ModelAsset
+from ghm.model_download import CACHE_HELPERS, VERIFIED_CACHE
 
 INVENTORY = r'''
 import hashlib,json,os,pathlib,shutil,socket,sys
 c=json.load(sys.stdin)
+__CACHE__
 root=pathlib.Path(c['root'])
+cache={} if c.get('recheck') else cache_load(root/c['cache'])
 comfy=pathlib.Path(c['comfy']).resolve()
 modelroot=(comfy/'models').resolve()
 if str(root.resolve()) != str(root):
@@ -27,7 +30,9 @@ for item in c['files']:
     state='missing'
     if path.exists():
         state='conflict'
-        if path.is_file() and path.stat().st_size==item['size_bytes']:
+        if path.is_file() and path.stat().st_size==item['size_bytes'] and cache_ok(cache,path.resolve(),item['digest']):
+            state='valid'
+        elif path.is_file() and path.stat().st_size==item['size_bytes']:
             h=hashlib.sha256() if item['algorithm']=='sha256' else hashlib.sha1()
             if item['algorithm']=='git-sha1': h.update(('blob '+str(path.stat().st_size)+'\0').encode())
             with path.open('rb') as f:
@@ -66,8 +71,9 @@ def file_inventory(lock):
 
 
 async def inventory(executor, options, lock):
-    result = await executor.run_input('python3 -c ' + shlex.quote(INVENTORY),
-                                      json.dumps({'root': options.root, 'comfy': options.comfy_root, 'port': options.remote_port,
+    result = await executor.run_input('python3 -c ' + shlex.quote(INVENTORY.replace('__CACHE__', CACHE_HELPERS)),
+                                      json.dumps({'root': options.root, 'cache': VERIFIED_CACHE,
+                                                  'recheck': getattr(options, 'recheck_models', False), 'comfy': options.comfy_root, 'port': options.remote_port,
                                                   'files': file_inventory(lock)}), timeout=1800)
     if result.rc:
         raise ValueError('Không đọc được thư mục/volume hoặc gặp symlink ngoài vùng cài. Không thay đổi dữ liệu.')

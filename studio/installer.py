@@ -11,7 +11,7 @@ import httpx
 from ghm.comfy import check_backend
 from ghm.executors.http import comfy_client
 from ghm.manifests import ModelAsset
-from ghm.model_download import DEFAULT_WORKERS, download_many, model_item, snapshot_items
+from ghm.model_download import CACHE_HELPERS, DEFAULT_WORKERS, VERIFIED_CACHE, download_many, model_item, snapshot_items
 from ghm.remote_service import manage
 from ghm.schemas import HostOptions
 from studio.install_checks import inventory, summarize
@@ -67,6 +67,8 @@ import hashlib, json, os, pathlib, sys
 from huggingface_hub import hf_hub_download
 
 c = json.load(sys.stdin)
+__CACHE__
+cache = {} if c.get("recheck") else cache_load(pathlib.Path(c["root"]) / c["cache"])
 for item in c["snapshots"]:
     destination = pathlib.Path(c["root"]) / "service-models" / item["repo"]
     destination.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,7 @@ for item in c["snapshots"]:
         path = destination / f['filename']
         def valid():
             if not path.is_file() or path.stat().st_size != f['size_bytes']: return False
+            if cache_ok(cache, path.resolve(), f['digest']): return True
             h = hashlib.sha256() if f['algorithm']=='sha256' else hashlib.sha1()
             if f['algorithm']=='git-sha1': h.update(('blob '+str(path.stat().st_size)+'\0').encode())
             with path.open('rb') as handle:
@@ -128,7 +131,9 @@ class InstallExecutor:
         else:
             result = await self.executor.run_input(value, input_data, timeout=timeout, on_output=callback)
         if result.rc == 73:
-            raise ValueError('Tiến trình cài cũ còn giữ khóa trên GPU. Chưa được chạy lại; chờ nó dừng rồi thử tiếp.')
+            raise ValueError('Một tiến trình cài/tải model trước đó vẫn đang chạy trên Pod và giữ khóa '
+                             '(thường tự dừng trong 1–2 phút). Đợi rồi bấm cài lại; Historia không chạy hai bộ cài '
+                             'cùng lúc để tránh hỏng file. File đã tải dở được giữ và tải tiếp.')
         return result
 
     async def run_input(self, command, data, timeout=60, on_output=None):
@@ -139,6 +144,17 @@ class InstallExecutor:
 
 
 PARALLEL_PROBE = 'sleep 2; echo historia-channel-ok'
+
+
+async def stop_remote_downloader(executor, pidfile: str) -> None:
+    """Best effort: terminate the batch downloader whose PID it wrote itself. Never raises."""
+    q = shlex.quote(pidfile)
+    command = (f"if [ -f {q} ]; then pid=$(cat {q}); "
+               f"case \"$pid\" in ''|*[!0-9]*) ;; *) kill \"$pid\" 2>/dev/null;; esac; rm -f {q}; fi")
+    try:
+        await asyncio.wait_for(executor.run(command, 20), 25)
+    except Exception:  # noqa: BLE001 -- cleanup must not mask the original failure
+        pass
 
 
 async def parallel_channels(executor) -> bool:
@@ -295,8 +311,18 @@ async def install(hosts, job, lock: dict, log) -> dict:
             total = sum(item['size_bytes'] or 0 for item in items) / 1024**3
             log(f'Tải {len(items)} file model ({total:.1f} GiB), tối đa {DEFAULT_WORKERS} file cùng lúc; '
                 'SHA256 kiểm tra ngay khi tải, file hợp lệ được giữ.')
-            await download_many(model_executor, items, [comfy + '/models', root + '/service-models'], token,
-                                28800, on_output=lambda channel, line: log(line))
+            pidfile = root + '/.historia-download.pid'
+            if options.recheck_models:
+                log('Kiểm tra lại checksum toàn bộ model (bỏ qua bộ nhớ đệm); bước này đọc lại mọi file.')
+            try:
+                await download_many(model_executor, items, [comfy + '/models', root + '/service-models'], token,
+                                    28800, on_output=lambda channel, line: log(line),
+                                    cache=root + '/' + VERIFIED_CACHE, recheck=options.recheck_models, pidfile=pidfile)
+            except asyncio.CancelledError:
+                # Another install step failed: stop the remote downloader too, so it does not keep
+                # the model lock (partial .part files stay and resume on the next install).
+                await asyncio.shield(stop_remote_downloader(base, pidfile))
+                raise
             log('Đã tải và kiểm tra checksum toàn bộ file model.')
 
         if await parallel_channels(base):
@@ -307,8 +333,9 @@ async def install(hosts, job, lock: dict, log) -> dict:
             await download_models()
             await install_dependencies()
 
-        result = await executor.run_input(q(root + "/llm-venv/bin/python") + " -c " + q(SNAPSHOT_SCRIPT),
+        result = await executor.run_input(q(root + "/llm-venv/bin/python") + " -c " + q(SNAPSHOT_SCRIPT.replace('__CACHE__', CACHE_HELPERS)),
                                           json.dumps({"root": root, "snapshots": lock["snapshots"],
+                                                      "cache": VERIFIED_CACHE, "recheck": options.recheck_models,
                                                       "token": hosts.setting("hf_token")}), timeout=14400,
                                           on_output=lambda channel, line: log(line))
         if result.rc:

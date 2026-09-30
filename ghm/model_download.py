@@ -11,11 +11,44 @@ from pathlib import PurePosixPath
 from urllib.parse import quote
 
 DEFAULT_WORKERS = 4
+VERIFIED_CACHE = '.historia-verified.json'
 
-BATCH_SCRIPT = r"""
+# Remembers files whose checksum was already verified, keyed by resolved path, and trusts
+# the entry only while size and mtime are unchanged. Saves re-reading >100 GB on every install.
+CACHE_HELPERS = r"""
+def cache_load(path):
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+def cache_stat(path):
+    st = os.stat(path)
+    return [st.st_size, st.st_mtime_ns]
+def cache_ok(cache, path, digest):
+    entry = cache.get(str(path))
+    try:
+        return isinstance(entry, dict) and entry.get("digest") == digest and entry.get("stat") == cache_stat(path)
+    except OSError:
+        return False
+def cache_save(path, cache):
+    tmp = str(path) + ".tmp-" + str(os.getpid())
+    with open(tmp, "w") as handle:
+        json.dump(cache, handle)
+    os.replace(tmp, path)
+"""
+
+_BATCH = r"""
 import hashlib, json, os, pathlib, shutil, sys, threading, time, urllib.request, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 c = json.load(sys.stdin)
+__CACHE__
+cache_path = c.get("cache")
+cache = {} if (not cache_path or c.get("recheck")) else cache_load(cache_path)
+pidfile = c.get("pidfile")
+if pidfile:
+    pathlib.Path(pidfile).write_text(str(os.getpid()))
 roots = [pathlib.Path(r).resolve() for r in c["roots"]]
 items = sorted(c["items"], key=lambda i: -(i.get("size_bytes") or 0))
 guard, stop = threading.Lock(), threading.Event()
@@ -69,9 +102,14 @@ def fetch(item):
     if part.is_symlink():
         raise RuntimeError("Partial download is a symlink.")
     if target.is_file():
+        if cache_ok(cache, target, want):
+            advance(os.stat(target).st_size)
+            say("Model ready: " + item["name"])
+            return
         h = hasher(item)
         advance(feed(h, target))
         if h.hexdigest() == want:
+            remember(target, want)
             say("Model ready: " + item["name"])
             return
         raise RuntimeError("Existing model has a different checksum; rename it before retrying.")
@@ -86,6 +124,7 @@ def fetch(item):
             h, offset = hasher(item), 0
         elif offset and offset == size and h.hexdigest() == want:
             os.replace(part, target)
+            remember(target, want)
             advance(offset)
             say("Model ready: " + item["name"])
             return
@@ -116,7 +155,11 @@ def fetch(item):
         os.replace(part, part.with_name(part.name + ".invalid-" + str(time.time_ns())))
         raise RuntimeError("Checksum mismatch. Partial file quarantined; retry starts cleanly.")
     os.replace(part, target)
+    remember(target, want)
     say("Model ready: " + item["name"])
+def remember(target, digest):
+    with guard:
+        cache[str(target)] = {"digest": digest, "stat": cache_stat(target)}
 # Free space per filesystem for everything still missing, before any transfer starts.
 needed = {}
 for item in items:
@@ -139,8 +182,20 @@ def run(item):
     except BaseException as exc:
         stop.set()
         failed.append((item["name"], exc))
-with ThreadPoolExecutor(max_workers=max(1, min(int(c.get("workers") or 1), 8))) as pool:
-    list(pool.map(run, items))
+try:
+    with ThreadPoolExecutor(max_workers=max(1, min(int(c.get("workers") or 1), 8))) as pool:
+        list(pool.map(run, items))
+finally:
+    if cache_path:
+        try:
+            cache_save(cache_path, cache)
+        except OSError:
+            pass
+    if pidfile:
+        try:
+            os.unlink(pidfile)
+        except OSError:
+            pass
 for name, exc in failed:
     if isinstance(exc, RuntimeError) and str(exc).startswith("Stopped"):
         continue
@@ -150,6 +205,7 @@ if failed:
     sys.exit(1)
 print("All downloads complete; checksums verified.", flush=True)
 """
+BATCH_SCRIPT = _BATCH.replace("__CACHE__", CACHE_HELPERS)
 
 _SAFE_NAME = re.compile(r"[\w.@/+-]{1,200}")
 
@@ -198,14 +254,16 @@ def failed_names(output: str) -> list[str]:
 
 
 async def download_many(executor, items: list[dict], roots: list[str], token: str | None,
-                        timeout: float, on_output=None, workers: int = DEFAULT_WORKERS) -> str:
+                        timeout: float, on_output=None, workers: int = DEFAULT_WORKERS,
+                        cache: str | None = None, recheck: bool = False, pidfile: str | None = None) -> str:
     """Download several pinned files concurrently in one remote command."""
     if not items:
         return ""
     for item in items:
         if not _SAFE_NAME.fullmatch(item["name"]):
             raise ValueError("Model name is not safe to report.")
-    payload = {"roots": roots, "items": items, "workers": workers,
+    payload = {"roots": roots, "items": items, "workers": workers, "cache": cache, "recheck": recheck,
+               "pidfile": pidfile,
                "token": token if any(i.get("auth") for i in items) else None}
     result = await executor.run_input("python3 -c " + shlex.quote(BATCH_SCRIPT), json.dumps(payload),
                                       timeout=timeout, on_output=on_output)

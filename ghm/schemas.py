@@ -137,6 +137,8 @@ class HostOptions(BaseModel):
     comfy_path: str | None = None
     workflow: dict | None = None
     smoke_timeout: int = Field(default=300, ge=10, le=1800)
+    # Re-hash every model instead of trusting the verified-checksum cache (size+mtime unchanged).
+    recheck_models: bool = False
 
     @property
     def comfy_root(self) -> str:

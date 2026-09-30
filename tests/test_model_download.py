@@ -183,3 +183,70 @@ def test_snapshot_items_match_service_layout():
         snapshot_items([{'name': 'x', 'repo': 'org/x', 'revision': 'a'*40,
                          'files': [{'filename': '../escape', 'size_bytes': 1, 'digest': 'b'*40,
                                     'algorithm': 'git-sha1'}]}], '/r')
+
+
+def run_cached(root, items, **extra):
+    payload = json.dumps({'roots': [str(root / 'models')], 'items': items, 'workers': 2, 'token': None,
+                          'cache': str(root / '.historia-verified.json'), **extra})
+    return subprocess.run([sys.executable, '-c', BATCH_SCRIPT], input=payload, capture_output=True,
+                          text=True, timeout=60, check=False)
+
+
+def test_verified_cache_skips_rehash_until_file_changes(server, tmp_path):
+    items = [item(server, tmp_path, '/f1.bin')]
+    assert run_cached(tmp_path, items).returncode == 0
+    cache = json.loads((tmp_path / '.historia-verified.json').read_text())
+    target = tmp_path / 'models' / 'f1.bin'
+    assert cache[str(target.resolve())]['digest'] == items[0]['digest']
+    # Same size + mtime: trusted without reading (a lying cache entry proves it was not re-hashed).
+    cache[str(target.resolve())]['digest'] = 'f' * 64
+    (tmp_path / '.historia-verified.json').write_text(json.dumps(cache))
+    items[0]['digest'] = 'f' * 64
+    assert run_cached(tmp_path, items).returncode == 0
+    # recheck ignores the cache and catches the mismatch.
+    assert run_cached(tmp_path, items, recheck=True).returncode == 1
+    # A modified file (new mtime) is re-hashed even without recheck.
+    items[0]['digest'] = hashlib.sha256(FILES['/f1.bin']).hexdigest()
+    target.write_bytes(b'x' * len(FILES['/f1.bin']))
+    result = run_cached(tmp_path, items)
+    assert result.returncode == 1 and 'different checksum' in result.stdout
+
+
+def test_downloader_writes_and_removes_pidfile(server, tmp_path):
+    pidfile = tmp_path / 'dl.pid'
+    assert run_cached(tmp_path, [item(server, tmp_path, '/f2.bin')], pidfile=str(pidfile)).returncode == 0
+    assert not pidfile.exists()
+
+
+def test_stop_remote_downloader_kills_only_numeric_pid():
+    from studio.installer import stop_remote_downloader
+    seen = []
+
+    class Recorder:
+        async def run(self, command, timeout=None):
+            seen.append(command)
+            raise ConnectionError('gone')  # must be swallowed
+    asyncio.run(stop_remote_downloader(Recorder(), '/w/.historia-download.pid'))
+    assert "*[!0-9]*" in seen[0] and 'kill "$pid"' in seen[0]
+
+
+def test_inventory_trusts_cache_and_recheck_ignores_it(tmp_path):
+    from studio.install_checks import INVENTORY
+    from ghm.model_download import CACHE_HELPERS
+    root = tmp_path / 'root'
+    model = root / 'ComfyUI' / 'models' / 'a.bin'
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b'abc')
+    st = model.stat()
+    (root / '.historia-verified.json').write_text(json.dumps(
+        {str(model.resolve()): {'digest': 'd' * 64, 'stat': [st.st_size, st.st_mtime_ns]}}))
+
+    def state(recheck):
+        payload = {'root': str(root), 'comfy': str(root / 'ComfyUI'), 'port': 1, 'cache': '.historia-verified.json',
+                   'recheck': recheck, 'files': [{'name': 'a', 'area': 'models', 'relative': 'a.bin',
+                                                  'size_bytes': 3, 'digest': 'd' * 64, 'algorithm': 'sha256'}]}
+        out = subprocess.run([sys.executable, '-c', INVENTORY.replace('__CACHE__', CACHE_HELPERS)],
+                             input=json.dumps(payload), capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(out.stdout)['files'][0]['state']
+    assert state(False) == 'valid'
+    assert state(True) == 'conflict'
