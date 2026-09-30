@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -30,6 +31,12 @@ from studio.schemas import (
     SourceUpdate,
     TextSourceInput,
 )
+
+
+class AbandonInput(BaseModel):
+    # Deliberately untyped values: jobs.abandon() accepts only the JSON literal true (409 otherwise).
+    confirmed: object = False
+    remote_state_unknown: object = False
 
 
 def router(service, jobs, host_lock):
@@ -280,7 +287,8 @@ def router(service, jobs, host_lock):
         return jobs.production(id)
 
     @api.post('/projects/{id}/production', status_code=201)
-    async def start_production(id: str, payload: ProductionInput):
+    def start_production(id: str, payload: ProductionInput):
+        # Plain def: runs in the threadpool, so hashing artifacts never blocks the event loop.
         return jobs.start_production(id, payload.stage)
 
     @api.get('/projects/{id}/production-runs')
@@ -336,10 +344,10 @@ def router(service, jobs, host_lock):
 
     @api.get("/jobs")
     def list_jobs(project_id: str | None = None):
-        return jobs.list(project_id)
+        return jobs.list(project_id, summary=True)
 
     @api.post("/projects/{id}/jobs", status_code=201)
-    async def submit(id: str, payload: JobInput):
+    def submit(id: str, payload: JobInput):
         return jobs.submit(id, payload)
 
     @api.get("/jobs/{id}/events")
@@ -358,9 +366,8 @@ def router(service, jobs, host_lock):
         return jobs.pause(id)
 
     @api.post('/jobs/{id}/abandon')
-    async def abandon(id: str, payload: dict):
-        return jobs.abandon(id, confirmed=payload.get('confirmed'),
-                            remote_state_unknown=payload.get('remote_state_unknown'))
+    def abandon(id: str, payload: AbandonInput):
+        return jobs.abandon(id, confirmed=payload.confirmed, remote_state_unknown=payload.remote_state_unknown)
 
     @api.post("/jobs/{id}/resume")
     async def resume(id: str):

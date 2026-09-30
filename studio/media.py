@@ -1,5 +1,6 @@
 """Bounded local media operations. Paths come only from the artifact store."""
 import hashlib
+import os
 import json
 import math
 import re
@@ -21,12 +22,53 @@ def ffmpeg() -> str:
         raise ValueError("Thiếu FFmpeg. Cài các dependency local rồi khởi động lại.") from exc
 
 
+_STAT_CACHE_LIMIT = 4096
+_digests: dict[str, tuple[int, int, str]] = {}
+_probes: dict[str, tuple[int, int, dict]] = {}
+
+
+def _stat_key(path: Path) -> tuple[str, int, int]:
+    st = os.stat(path)
+    return str(Path(path).resolve()), st.st_size, st.st_mtime_ns
+
+
+def _remember(cache: dict, key: str, entry: tuple) -> None:
+    if len(cache) >= _STAT_CACHE_LIMIT:
+        cache.clear()
+    cache[key] = entry
+
+
 def digest(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
+    """SHA-256 of a file, cached while its size and mtime are unchanged.
+
+    Production ticks, API reads and exports re-verify the same artifacts constantly;
+    re-reading multi-GB media on every 0.1-0.5 s tick stalled the event loop.
+    """
+    key, size, mtime = _stat_key(path)
+    hit = _digests.get(key)
+    if hit and hit[:2] == (size, mtime):
+        return hit[2]
+    with open(path, "rb") as handle:
+        value = hashlib.file_digest(handle, "sha256").hexdigest()
+    _remember(_digests, key, (size, mtime, value))
+    return value
 
 
 def probe(path: Path) -> dict[str, Any]:
+    """Media metadata, cached while the file's size and mtime are unchanged."""
+    try:
+        key, size, mtime = _stat_key(path)
+    except OSError as exc:
+        raise ValueError("Không đọc được tệp media; kiểm tra định dạng hoặc tệp bị hỏng.") from exc
+    hit = _probes.get(key)
+    if hit and hit[:2] == (size, mtime):
+        return dict(hit[2])
+    value = _probe(path)
+    _remember(_probes, key, (size, mtime, value))
+    return dict(value)
+
+
+def _probe(path: Path) -> dict[str, Any]:
     import av
     try:
         with av.open(str(path)) as container:

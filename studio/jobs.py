@@ -20,6 +20,17 @@ from studio.service import canonical_hash
 ACTIVE = {"queued", "running", "cancelling", "reconciling", "paused"}
 
 
+def summarize_job(row):
+    snapshot = row.get('snapshot') or {}
+    scene, project = snapshot.get('scene') or {}, snapshot.get('project') or {}
+    slim = {'production_run_id': snapshot.get('production_run_id')}
+    if scene:
+        slim['scene'] = {'id': scene.get('id'), 'title': scene.get('title')}
+    if project:
+        slim['project'] = {'id': project.get('id'), 'title': project.get('title')}
+    return {**row, 'snapshot': slim}
+
+
 class PauseAtBoundary(Exception):
     """Current shot is fully downloaded; no remote cancellation is implied."""
 
@@ -39,12 +50,18 @@ class StudioJobs:
         from studio.runtime import RuntimeManager
         self.runtime = RuntimeManager(self)
 
-    def list(self, project_id=None):
+    def list(self, project_id=None, *, summary=False):
+        """Newest 200 jobs. ``summary`` keeps only the snapshot fields list views show.
+
+        A full snapshot embeds the whole project (source texts can be 200k characters);
+        the UI polls this list every 3 s, so the API returns summaries.
+        """
         with self.service.sessions() as session:
             query = select(Job).order_by(Job.created_at.desc())
             if project_id:
                 query = query.where(Job.project_id == project_id)
-            return [self.service.read(j) for j in session.scalars(query.limit(200))]
+            rows = [self.service.read(j) for j in session.scalars(query.limit(200))]
+        return [summarize_job(row) for row in rows] if summary else rows
 
     def assert_no_abandoned_remote(self, host_id):
         with self.service.sessions() as session:
@@ -625,7 +642,12 @@ class StudioJobs:
             except Exception:  # a bad production tick must not kill the durable worker
                 logging.getLogger(__name__).exception('Production tick failed; worker continues.')
                 await asyncio.sleep(2)
-            started = self.dispatch()
+            try:
+                started = self.dispatch()
+            except Exception:  # e.g. "database is locked": log and retry instead of stopping all rendering
+                logging.getLogger(__name__).exception('Dispatch failed; worker continues.')
+                started = 0
+                await asyncio.sleep(2)
             await asyncio.sleep(.1 if started else .5)
 
     def dispatch(self):
@@ -650,6 +672,23 @@ class StudioJobs:
         return started
 
     async def _run(self, job):
+        try:
+            await self._run_and_record(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # recording the outcome itself failed (e.g. database locked)
+            logging.getLogger(__name__).exception('Could not record the outcome of job %s', job.id)
+            for _ in range(3):
+                try:
+                    self.patch(job.id, status='failed', error='Không ghi được kết quả tác vụ vào cơ sở dữ liệu. '
+                               'Kiểm tra file trên GPU bằng Đối chiếu trước khi chạy lại.')
+                    break
+                except Exception:  # noqa: BLE001 -- keep trying briefly; startup recovery is the last resort
+                    await asyncio.sleep(1)
+        finally:
+            self.active.pop(job.id, None)
+
+    async def _run_and_record(self, job):
         try:
             await self.execute(job)
             self.patch(job.id, status="completed", progress=100)
@@ -678,8 +717,6 @@ class StudioJobs:
             self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review'} else "failed", error=message[:2000])
             if job.kind in {'install', 'verify'}:
                 self.installations.patch(job.host_id, 'install_failed' if job.kind == 'install' else 'verify_failed')
-        finally:
-            self.active.pop(job.id, None)
 
     def _finish_speech(self, job, path):
         duration = probe(path)["duration"]

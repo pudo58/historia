@@ -34,6 +34,9 @@ def make_session_factory(database_url: str) -> sessionmaker[Session]:
         @event.listens_for(engine, "connect")
         def sqlite_setup(connection, record):
             connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA busy_timeout=15000")
+            # WAL lets the UI read while the worker writes; far fewer "database is locked" errors.
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
     Base.metadata.create_all(engine)
     return sessionmaker(engine, expire_on_commit=False)

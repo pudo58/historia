@@ -190,7 +190,7 @@ class ProductionRuns:
             if (project.get('frame_interpolation') == 'rife24' and
                     any(s.get('motion', 'wan') == 'wan' for s in project['scenes']) and
                     not self.jobs.optional_ready(host_id, 'rife-v4.26')):
-                raise ValueError('Cài model RIFE 4.26 tùy chọn trước khi bắt đầu lượt final.')
+                raise ValueError('Dự án đang bật nội suy RIFE nhưng GPU này chưa có model RIFE 4.26. Cài ở Bộ AI & kiểm chứng → Model tùy chọn, hoặc đổi "Nội suy bản final" sang "Không nội suy" (video sẽ kém mượt hơn).')
             for scene in project['scenes']:
                 self.service.validate_scene(project_id, SceneInput.model_validate({k: scene[k] for k in SceneInput.model_fields if k in scene}))
                 if not scene['narration'].strip() or not scene['visual_prompt'].strip():
