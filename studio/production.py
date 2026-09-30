@@ -8,6 +8,7 @@ from copy import deepcopy
 
 from sqlalchemy import select, text
 
+from studio.packs import GENERATION_VERSION
 from studio.media import probe
 from studio.models import Job, ProductionRun, Scene
 from studio.packs import load_graph
@@ -494,7 +495,7 @@ class ProductionRuns:
                         job = Job(project_id=run.project_id, scene_id=scene['id'] if scene else None,
                             host_id=clip_host if kind != 'export' else None, kind=kind, input_hash=hashed,
                             snapshot={'project': snap_project, 'scene': deepcopy(scene), 'production_run_id': run.id,
-                                      'generation_version': 3,
+                                      'generation_version': GENERATION_VERSION,
                                       'draft_export_authorized': True, 'request': {'kind': kind}, 'workflow_hashes': workflows})
                         session.add(job)
                         session.flush()

@@ -11,6 +11,7 @@ import httpx
 from sqlalchemy import select
 
 from studio.backend import ReconcileRequired, RemoteBackend
+from studio.packs import GENERATION_VERSION
 from studio.media import probe, render_film, scene_clip_count, shot_count
 from studio.models import Artifact, Installation, Job, JobEvent, Project, Scene, Source
 from studio.packs import PACK_ID, load_graph
@@ -515,7 +516,7 @@ class StudioJobs:
         if request.kind == "speech":
             from studio.tts_device import new_tts_device
             project_snapshot["tts_device"] = new_tts_device(project)
-        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(), 'generation_version': 3,
+        snapshot = {"project": project_snapshot, "scene": scene, "request": request.model_dump(), 'generation_version': GENERATION_VERSION,
                     'script_provider': script_provider, 'prompt_version': 3,
                     'image_candidates': candidates if request.kind == 'image_review' else None,
                     "workflow_hashes": {n: canonical_hash(load_graph(n)) for n in

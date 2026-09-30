@@ -175,3 +175,11 @@ TypeScript/build/ESLint passed. The full test process disabled AsyncSSH's defaul
 discovery in memory because this workstation's default SSH keypair caused two unrelated
 test failures. No user SSH key/config file was changed. The only remaining test warning
 is the existing Starlette/httpx TestClient deprecation.
+
+## Generation 4 (smoothness and quality)
+
+- New projects default to RIFE (`rife24`): Wan renders 16 fps; without interpolation the export duplicates frames to reach 24 fps, which judders. RIFE goes 16→48 and the export drops to 24.
+- Wan and RIFE clips are saved at H.264 CRF 17 (ComfyUI default is about 23) because the export re-encodes them. Verified against ComfyUI `ee71d5c` (SaveVideo `format.codec.encoding`).
+- With LightX2V / Lightning (`cfg 1`) ComfyUI ignores the negative prompt, so "no text/watermark" now lives in the positive prompt.
+- ComfyUI already falls back to tiled VAE decoding on out-of-memory, so the Wan graph keeps `VAEDecode`.
+- Resumed jobs keep the generation version they started with and render exactly as before.

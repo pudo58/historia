@@ -11,6 +11,10 @@ from studio.service import canonical_hash
 
 PACK_ID = "historical-v1"
 COMFY_COMMIT = "ee71d5c4993f29086b27fde1629a945ae48425bf"
+# New jobs record this in their snapshot; graph changes are gated on it so a resumed older
+# job reproduces exactly what it started with. 4: clips saved at CRF 17 instead of ~23.
+GENERATION_VERSION = 4
+CLIP_CRF = 17
 TEMPLATE_COMMIT = "fc54797eb70273aee6e3918eeeecc1d0ac0760e1"
 WORKFLOWS = Path(__file__).parent / "workflows"
 ENVIRONMENTS = {
@@ -207,10 +211,15 @@ def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list
             raise ValueError('RIFE cần đúng một clip nguồn đã lưu.')
         graph['1']['inputs']['file'] = image_names[0]
         graph['6']['inputs']['filename_prefix'] = output_prefix
+        if generation_version >= 4:
+            high_quality_save(graph['6']['inputs'])
     elif name == "qwen_image":
         graph["6"]["inputs"]["text"] = prompt
         graph["58"]["inputs"].update(width=width, height=height)
         lightning = generation_version >= 3 and (project_settings or {}).get('keyframe_profile') == 'lightning'
+        if lightning and generation_version >= 4:
+            # cfg 1 ignores the negative prompt; keep the exclusions in the positive one.
+            graph["6"]["inputs"]["text"] = prompt + " No text, captions or watermarks; no modern objects."
         if lightning:
             graph['67'] = {'class_type': 'LoraLoaderModelOnly', 'inputs': {
                 'model': ['37', 0], 'lora_name':
@@ -244,10 +253,20 @@ def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list
             raise ValueError("Cần ảnh đại diện đã duyệt trước khi tạo clip.")
         graph["97"]["inputs"]["image"] = image_names[0]
         graph["93"]["inputs"]["text"] = (prompt + f" Shot variation {shot+1}; no text or subtitles."
-            if generation_version < 3 else prompt + f" Shot {shot+1}: continuous natural motion, clean historical imagery.")
+            if generation_version < 3 else prompt + f" Shot {shot+1}: continuous natural motion, clean historical imagery."
+            # cfg 1 (LightX2V) ignores the negative prompt, so the key exclusions live here.
+            + (" No on-screen text, captions, logos or watermarks." if generation_version >= 4 else ""))
         graph["98"]["inputs"].update(width=width, height=height, length=frames)
         count = max(2, steps or 4)
         graph["86"]["inputs"].update(noise_seed=seed+shot, steps=count, end_at_step=count//2)
         graph["85"]["inputs"].update(steps=count, start_at_step=count//2, end_at_step=count)
         graph["108"]["inputs"]["filename_prefix"] = output_prefix
+        if generation_version >= 4:
+            high_quality_save(graph["108"]["inputs"])
     return graph
+
+
+def high_quality_save(inputs: dict) -> None:
+    """Clips are re-encoded again at export; keep the intermediate near-lossless (verified on
+    ComfyUI ee71d5c: SaveVideo h264 'encoding' dynamic combo, default is ~CRF 23)."""
+    inputs.update({"format.codec.encoding": "re-encode", "format.codec.encoding.crf": CLIP_CRF})
