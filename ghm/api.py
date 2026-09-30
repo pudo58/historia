@@ -23,7 +23,7 @@ from ghm.executors.base import Executor
 from ghm.executors.ssh import SSHExecutor
 from ghm.models import Host
 from ghm.recipe_runner import RecipeRunner
-from ghm import remote_access, runpod
+from ghm import auth as auth_module, remote_access, runpod
 from ghm.recipes import RecipeCatalog
 from ghm.tunnel import TunnelManager
 from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunPodAction, RunPodConnect, RunStart, HostOptions, TokenUpdate
@@ -61,7 +61,10 @@ def _to_read(host, service):
 
 
 def create_app(settings: Settings | None = None, secret_store: SecretStore | None = None,
-               executor_factory: Callable[[Host, str], Executor] | None = None):
+               executor_factory: Callable[[Host, str], Executor] | None = None, require_password: bool | None = None):
+    # Tests inject an executor factory; the real app never does, so the password gate is on for it.
+    if require_password is None:
+        require_password = executor_factory is None
     config = settings or Settings()
     sessions = make_session_factory(config.database_url)
     secrets = secret_store or SecretStore.from_environment()
@@ -105,6 +108,9 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                        allow_headers=["content-type", "last-event-id"])
 
     remote_access.ensure_token(service)
+    auth = auth_module.Auth(service, enabled=require_password)
+    app.state.auth = auth
+    app.include_router(auth_module.router(auth))
     import logging
     logging.getLogger("uvicorn.error").info(
         "Truy cập qua tunnel cần mã truy cập: lấy link ở trang Kết nối GPU → Truy cập từ xa.")
@@ -121,6 +127,9 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             origin = request.headers.get("origin")
             if origin and origin not in origins:
                 return JSONResponse({"detail": "Untrusted browser origin."}, status_code=403)
+        path = request.url.path
+        if path.startswith("/api") and not path.startswith("/api/auth/") and not auth.authenticated(request):
+            return auth.deny()
         upload = request.url.path.startswith("/api/studio/projects/") and request.url.path.endswith("/upload")
         try:
             length = int(request.headers.get("content-length", "0"))

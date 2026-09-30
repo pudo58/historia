@@ -15,6 +15,7 @@ async function fixture(page:Page, status='running') {
   let failLogs=false;
   await page.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
+    if(path==='/api/auth/status')return route.fulfill({json:{enabled:false,configured:true,authenticated:true,min_length:8}});
     if(request.method()!=='GET'){
       mutations.push(path);bodies.push({path,body:request.postDataJSON?.()??null});
       if(path.endsWith('/pause'))run.status='paused';

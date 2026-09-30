@@ -2,10 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from ghm.config import Settings
 from ghm.database import make_session_factory
 from ghm.executors.fake import FakeExecutor
-from ghm.models import Host
 from ghm.schemas import HostCreate
 from ghm.security import SecretStore
 from ghm.services.hosts import HostService

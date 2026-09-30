@@ -15,6 +15,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
   const response = await fetch(path, { method, headers: body === undefined ? {} : {'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!response.ok) {
     const error = await response.json().catch(() => ({detail: 'Không kết nối được máy chủ local.'}));
+    if (response.status === 401 && (error.code === 'login_required' || error.code === 'setup_required')) window.dispatchEvent(new Event('historia:locked'));
     throw new Error(typeof error.detail === 'string' ? showMessage(error.detail) : Array.isArray(error.detail) ? error.detail.map((e: {loc: string[]; msg: string}) => `${e.loc.join('.')}: ${e.msg}`).join('; ') : error.detail?.message || 'Yêu cầu chưa thể thực hiện. Kiểm tra trạng thái tác vụ và thử lại.');
   }
   return response.status === 204 ? undefined as T : response.json();

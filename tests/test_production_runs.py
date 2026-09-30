@@ -1,6 +1,5 @@
 """Offline production tests: never start a worker or contact a paid GPU."""
 from copy import deepcopy
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
