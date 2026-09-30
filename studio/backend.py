@@ -15,6 +15,7 @@ from studio.media import probe
 from studio.packs import graph_for
 
 RIFE_OUTPUT_FPS = 48   # rife_post.json: 16 fps Wan clip x multiplier 3
+VIDEO_WORKFLOWS = {'wan_i2v', 'rife_post', 'wan_s2v'}
 
 
 def worker_failure(result):
@@ -189,7 +190,7 @@ print(json.dumps(data))
         from studio.metrics import execution_seconds
         from studio.service import canonical_hash
         target_dir = self.service.job_directory(job.id)
-        is_video = name in {'wan_i2v', 'rife_post'}
+        is_video = name in VIDEO_WORKFLOWS
         prior = job.result.get("submissions", {}).get(stage)
         prompt_id = (prior or {}).get('prompt_id') or str(uuid5(UUID(job.id), stage))
         async with self.generation_connection(job) as (client, cache):
@@ -231,11 +232,13 @@ print(json.dumps(data))
                 for index, path in enumerate(images):
                     from studio.formats import resolve_format
                     fmt = resolve_format(quality, job.snapshot.get("project", {}))
-                    upload_key = (digest(path), tuple(fmt['render_size']), fmt['legacy']) if name != 'rife_post' else (digest(path), 'video')
+                    # The clip of a RIFE job and the voice of an S2V job go up unchanged (no image fitting).
+                    as_is = name == 'rife_post' or (name == 'wan_s2v' and index == 1)
+                    upload_key = (digest(path), 'as-is') if as_is else (digest(path), tuple(fmt['render_size']), fmt['legacy'])
                     if upload_key in cache['uploads']:
                         names.append(cache['uploads'][upload_key])
                         continue
-                    if not fmt["legacy"] and name != 'rife_post':
+                    if not fmt["legacy"] and not as_is:
                         from PIL import Image, ImageOps
                         fitted = target_dir / f"reference-fit-{index}.png"
                         with Image.open(path) as original:
@@ -253,11 +256,16 @@ print(json.dumps(data))
                         raise ValueError("ComfyUI trả tên upload không an toàn.")
                     names.append(f"{subfolder}/{name_on_host}" if subfolder else name_on_host)
                     cache['uploads'][upload_key] = names[-1]
+                extra = {}
+                if name == 'wan_s2v':
+                    from studio.packs import s2v_chunks
+                    extra['chunks'] = s2v_chunks(probe(images[1])['duration'])
                 graph = graph_for(name, prompt, seed, quality, names, f"studio/{job.id}/{stage}", config['steps'] if config else steps, shot,
                                   project_settings=job.snapshot.get("project", {}),
                                   frames=config['frames'] if config else 81,
-                                  generation_version=job.snapshot.get('generation_version', 2))
-                if 'schema' not in cache or name == 'rife_post':
+                                  generation_version=job.snapshot.get('generation_version', 2), **extra)
+                # LoadVideo/LoadAudio list what was just uploaded, so their choices must be read fresh.
+                if 'schema' not in cache or name in {'rife_post', 'wan_s2v'}:
                     schema_response = await client.get("/object_info")
                     schema_response.raise_for_status()
                     cache['schema'] = schema_response.json()
@@ -345,6 +353,13 @@ print(json.dumps(data))
                     measured_fps = video_info.get('fps')
                     if measured_fps and abs(measured_fps - config['fps']) > .5:
                         raise ValueError('FPS clip Wan không khớp cấu hình shot; không lưu artifact sai.')
+                if name == 'wan_s2v':
+                    from studio.packs import S2V_FPS
+                    if video_info.get('fps') and abs(video_info['fps'] - S2V_FPS) > .5:
+                        raise ValueError('FPS clip S2V không khớp cấu hình; không lưu artifact sai.')
+                    wanted = probe(images[1])['duration']
+                    if (video_info.get('video_duration') or video_info['duration']) + .1 < wanted:
+                        raise ValueError('Clip S2V ngắn hơn giọng nói; không ghép để tránh lệch tiếng.')
                 if name == 'rife_post' and video_info.get('fps') and abs(video_info['fps'] - RIFE_OUTPUT_FPS) > .5:
                     raise ValueError('Clip RIFE không phải 48 fps: nội suy chưa được áp dụng; không lưu clip gốc như kết quả nội suy.')
             else:

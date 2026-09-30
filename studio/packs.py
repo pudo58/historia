@@ -47,18 +47,64 @@ OPTIONAL_MODEL_FILES = {
         'Qwen-Image-fp8-e4m3fn-Lightning-4steps-V1.0-bf16.safetensors', 'models/loras'),
     'rife-v4.26': ('Comfy-Org/frame_interpolation',
         'frame_interpolation/rife_v4.26.safetensors', 'models/frame_interpolation'),
+    # Wan2.2 S2V (the character speaks, lips follow the audio). Three files that are only useful together.
+    's2v-model': (REPOS['wan'],
+        'split_files/diffusion_models/wan2.2_s2v_14B_fp8_scaled.safetensors', 'models/diffusion_models'),
+    's2v-audio-encoder': (REPOS['wan'],
+        'split_files/audio_encoders/wav2vec2_large_english_fp16.safetensors', 'models/audio_encoders'),
+    's2v-lightning-lora': (REPOS['wan'],
+        'split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors', 'models/loras'),
 }
 RIFE_SHA256 = '151874592c877740e5db11522f4514df569eeafb0a0fcb2696f16e9e8d317c94'
+# Reviewed checksums (read from the Hugging Face LFS metadata); the install refuses any other content.
+OPTIONAL_SHA256 = {
+    'rife-v4.26': RIFE_SHA256,
+    's2v-model': '140e75af5534ac3d91e710d9df756f7032addd64b341ba2c1c70e3e6da9aa216',
+    's2v-audio-encoder': 'f0017a43ea57ef6b3d4866be607844bbd8cada6d30966f7d70044ed0d63d3f9e',
+    's2v-lightning-lora': '698321cb86bd30c4af06c9b84e656a1048c8cb54e06d50694536fb5de37fde41',
+}
+# One click installs every member of a group; the group is ready only when all members are.
+OPTIONAL_MODEL_GROUPS = {'wan-s2v': ('s2v-model', 's2v-audio-encoder', 's2v-lightning-lora')}
+S2V_MODEL = 'wan2.2_s2v_14B_fp8_scaled.safetensors'
+S2V_AUDIO_ENCODER = 'wav2vec2_large_english_fp16.safetensors'
+S2V_LORA = 'wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors'
+# Wan S2V works in chunks of 77 frames; each chunk covers 5 s of audio (80 frames at 16 fps) and the
+# decoded film is 2 frames short of K*80 (the template drops 3 frames after prepending the first latent).
+S2V_CHUNK_FRAMES = 77
+S2V_FPS = 16
+S2V_CHUNK_SECONDS = 80 / S2V_FPS
+S2V_MAX_CHUNKS = 3
+
+
+def optional_members(name: str) -> tuple[str, ...]:
+    """The model files behind one installable name (a group expands to its members)."""
+    if name in OPTIONAL_MODEL_GROUPS:
+        return OPTIONAL_MODEL_GROUPS[name]
+    if name in OPTIONAL_MODEL_FILES and not any(name in members for members in OPTIONAL_MODEL_GROUPS.values()):
+        return (name,)
+    raise ValueError('Model tùy chọn không được hỗ trợ.')
+
+
+def optional_names() -> list[str]:
+    """Names the UI can install: single files not owned by a group, then the groups."""
+    owned = {member for members in OPTIONAL_MODEL_GROUPS.values() for member in members}
+    return [name for name in OPTIONAL_MODEL_FILES if name not in owned] + list(OPTIONAL_MODEL_GROUPS)
 
 
 def resolve_optional_model(name: str, token: str | None = None):
     if name not in OPTIONAL_MODEL_FILES:
         raise ValueError('Model tùy chọn không được hỗ trợ.')
     repo, filename, destination = OPTIONAL_MODEL_FILES[name]
-    expected = RIFE_SHA256 if name == 'rife-v4.26' else None
-    asset = resolve_model(ModelAsset(name=name, repo=repo, filename=filename,
-                                    destination=destination, sha256=expected), token)
+    asset = resolve_model(ModelAsset(name=name, repo=repo, filename=filename, destination=destination,
+                                    sha256=OPTIONAL_SHA256.get(name)), token)
     return asset.model_dump(mode='json')
+
+
+def s2v_chunks(audio_seconds: float) -> int:
+    """Chunks needed so the decoded film (5 s per chunk minus 2 frames) covers the audio."""
+    if audio_seconds <= 0:
+        raise ValueError('Audio rỗng.')
+    return max(1, -int(-(audio_seconds + 2 / S2V_FPS) // S2V_CHUNK_SECONDS))
 
 
 def pack_info(lock: dict | None = None) -> dict:
@@ -194,7 +240,7 @@ def resolve_pack(token: str | None = None) -> dict:
 
 
 def load_graph(name: str) -> dict:
-    if name not in {"qwen_image", "qwen_edit", "wan_i2v", "rife_post"}:
+    if name not in {"qwen_image", "qwen_edit", "wan_i2v", "rife_post", "wan_s2v"}:
         raise ValueError("Workflow không thuộc bộ cho phép.")
     return json.loads((WORKFLOWS / f"{name}.json").read_text(encoding="utf-8"))
 
@@ -202,10 +248,14 @@ def load_graph(name: str) -> dict:
 def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list[str],
               output_prefix: str, steps: int | None = None, shot: int = 0,
               project_settings: dict | None = None, *, frames: int = 81,
-              generation_version: int = 2) -> dict:
+              generation_version: int = 2, chunks: int = 1) -> dict:
     from studio.formats import resolve_format
     graph = copy.deepcopy(load_graph(name))
     width, height = resolve_format(quality, project_settings)["render_size"]
+    if name == 'wan_s2v':
+        if len(image_names) != 2:
+            raise ValueError('S2V cần đúng một ảnh keyframe và một file giọng.')
+        return s2v_graph(graph, prompt, seed, image_names[0], image_names[1], output_prefix, width, height, chunks)
     if name == 'rife_post':
         if len(image_names) != 1:
             raise ValueError('RIFE cần đúng một clip nguồn đã lưu.')
@@ -263,6 +313,42 @@ def graph_for(name: str, prompt: str, seed: int, quality: str, image_names: list
         graph["108"]["inputs"]["filename_prefix"] = output_prefix
         if generation_version >= 4:
             high_quality_save(graph["108"]["inputs"])
+    return graph
+
+
+def s2v_graph(graph: dict, prompt: str, seed: int, image: str, audio: str, output_prefix: str,
+              width: int, height: int, chunks: int) -> dict:
+    """Wan2.2 S2V, wired like the official template: one first chunk, then ``chunks - 1`` extensions.
+
+    Each extension is conditioned on the audio window after the frames already made and on the
+    accumulated latent, then appended to it; the tail decodes the whole latent once.
+    """
+    if not 1 <= chunks <= S2V_MAX_CHUNKS:
+        raise ValueError(f'S2V chỉ nhận 1–{S2V_MAX_CHUNKS} đoạn (mỗi đoạn ~5 giây giọng nói).')
+    if width % 16 or height % 16:
+        raise ValueError('Kích thước S2V phải chia hết cho 16.')
+    graph['21']['inputs']['text'] = prompt
+    graph['32']['inputs']['audio'] = audio
+    graph['34']['inputs']['image'] = image
+    graph['40']['inputs'].update(width=width, height=height, length=S2V_CHUNK_FRAMES)
+    graph['41']['inputs']['seed'] = seed
+    latest = '41'
+    for index in range(1, chunks):
+        extend, sample, join = f'5{index}0', f'5{index}1', f'5{index}2'
+        graph[extend] = {'class_type': 'WanSoundImageToVideoExtend', 'inputs': {
+            'positive': ['21', 0], 'negative': ['22', 0], 'vae': ['30', 0], 'length': S2V_CHUNK_FRAMES,
+            'video_latent': [latest, 0], 'audio_encoder_output': ['33', 0], 'ref_image': ['34', 0]}}
+        graph[sample] = {'class_type': 'KSampler', 'inputs': {
+            'model': ['12', 0], 'seed': seed + index, 'steps': 4, 'cfg': 1, 'sampler_name': 'uni_pc',
+            'scheduler': 'simple', 'positive': [extend, 0], 'negative': [extend, 1],
+            'latent_image': [extend, 2], 'denoise': 1}}
+        graph[join] = {'class_type': 'LatentConcat', 'inputs': {
+            'samples1': [latest, 0], 'samples2': [sample, 0], 'dim': 't'}}
+        latest = join
+    graph['60']['inputs']['samples'] = [latest, 0]
+    graph['61']['inputs']['samples2'] = [latest, 0]
+    graph['65']['inputs']['filename_prefix'] = output_prefix
+    high_quality_save(graph['65']['inputs'])
     return graph
 
 

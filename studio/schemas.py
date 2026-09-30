@@ -210,6 +210,13 @@ class JobInput(StrictModel):
     candidate_ids: list[str] = Field(default_factory=list, max_length=2)
 
 
+class DialogueTestInput(StrictModel):
+    """One spoken line for the "character speaks" trial (Wan S2V), on a scene with an approved keyframe."""
+    scene_id: str
+    text: str = Field(min_length=2, max_length=400)
+    voice: str | None = Field(default=None, max_length=80)
+
+
 class ProductionRunInput(StrictModel):
     idempotency_key: str = Field(min_length=1, max_length=120)
     scene_revisions: dict[str, int]

@@ -1,0 +1,21 @@
+{
+  "10": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.2_s2v_14B_fp8_scaled.safetensors", "weight_dtype": "default"}},
+  "11": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["10", 0], "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "strength_model": 1}},
+  "12": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["11", 0], "shift": 8}},
+  "20": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
+  "21": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["20", 0], "text": "A person speaks to the camera, natural lip movements that follow the voice, subtle head and facial expression."}},
+  "22": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["20", 0], "text": "watermark, text, subtitles, modern objects, deformed hands, static, flicker"}},
+  "30": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+  "31": {"class_type": "AudioEncoderLoader", "inputs": {"audio_encoder_name": "wav2vec2_large_english_fp16.safetensors"}},
+  "32": {"class_type": "LoadAudio", "inputs": {"audio": "speech.wav"}},
+  "33": {"class_type": "AudioEncoderEncode", "inputs": {"audio_encoder": ["31", 0], "audio": ["32", 0]}},
+  "34": {"class_type": "LoadImage", "inputs": {"image": "keyframe.png"}},
+  "40": {"class_type": "WanSoundImageToVideo", "inputs": {"positive": ["21", 0], "negative": ["22", 0], "vae": ["30", 0], "width": 768, "height": 432, "length": 77, "batch_size": 1, "audio_encoder_output": ["33", 0], "ref_image": ["34", 0]}},
+  "41": {"class_type": "KSampler", "inputs": {"model": ["12", 0], "seed": 42, "steps": 4, "cfg": 1, "sampler_name": "uni_pc", "scheduler": "simple", "positive": ["40", 0], "negative": ["40", 1], "latent_image": ["40", 2], "denoise": 1}},
+  "60": {"class_type": "LatentCut", "inputs": {"samples": ["41", 0], "dim": "t", "index": 0, "amount": 1}},
+  "61": {"class_type": "LatentConcat", "inputs": {"samples1": ["60", 0], "samples2": ["41", 0], "dim": "t"}},
+  "62": {"class_type": "VAEDecode", "inputs": {"samples": ["61", 0], "vae": ["30", 0]}},
+  "63": {"class_type": "ImageFromBatch", "inputs": {"image": ["62", 0], "batch_index": 3, "length": 4096}},
+  "64": {"class_type": "CreateVideo", "inputs": {"images": ["63", 0], "fps": 16}},
+  "65": {"class_type": "SaveVideo", "inputs": {"video": ["64", 0], "filename_prefix": "studio/dialogue", "format": "mp4", "format.codec": "h264"}}
+}

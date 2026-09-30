@@ -199,6 +199,21 @@ def render_rife24(source: Path, target: Path, original: Path) -> None:
         raise ValueError('Clip RIFE 24 fps không phủ đủ thời lượng shot nguồn.')
 
 
+def mux_dialogue(video: Path, audio: Path, target: Path) -> None:
+    """Put the spoken audio under a talking clip, cut to the audio length (the clip covers whole chunks)."""
+    seconds = probe(audio)['duration']
+    if seconds <= 0 or probe(video)['duration'] + .1 < seconds:
+        raise ValueError('Clip nói ngắn hơn giọng đọc; không ghép để tránh lệch tiếng.')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _cached_render(target, ['-i', str(video), '-i', str(audio), '-map', '0:v:0', '-map', '1:a:0',
+        '-t', f'{seconds:.3f}', '-c:v', 'libx264', '-crf', '17', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '48000'],
+        {'video': digest(video), 'audio': digest(audio), 'seconds': round(seconds, 3), 'version': 1}, seconds)
+    measured = probe(target)
+    if measured['duration'] + .1 < seconds:
+        raise ValueError('Clip nói sau khi ghép tiếng ngắn hơn giọng đọc.')
+
+
 def srt_time(seconds: float) -> str:
     millis = max(0, round(seconds * 1000))
     return f"{millis//3600000:02d}:{millis//60000%60:02d}:{millis//1000%60:02d},{millis%1000:03d}"

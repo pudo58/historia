@@ -16,6 +16,7 @@ from studio.schemas import (
     BenchmarkInput,
     ChainFrameApproval,
     CharacterInput,
+    DialogueTestInput,
     InstallConsent,
     JobInput,
     KeyframeBatchApproval,
@@ -82,8 +83,8 @@ def router(service, jobs, host_lock):
 
     @api.get('/hosts/{id}/optional-models')
     def optional_models(id: str):
-        from studio.packs import OPTIONAL_MODEL_FILES
-        return {name: jobs.optional_ready(id, name) for name in OPTIONAL_MODEL_FILES}
+        from studio.packs import optional_names
+        return {name: jobs.optional_ready(id, name) for name in optional_names()}
 
     @api.get('/projects/{id}/pod-idle')
     async def pod_idle(id: str):
@@ -354,6 +355,10 @@ def router(service, jobs, host_lock):
     @api.post("/projects/{id}/jobs", status_code=201)
     def submit(id: str, payload: JobInput):
         return jobs.submit(id, payload)
+
+    @api.post('/projects/{id}/dialogue-test', status_code=201)
+    def dialogue_test(id: str, payload: DialogueTestInput):
+        return jobs.dialogue_test(id, payload.scene_id, payload.text, payload.voice)
 
     @api.get("/jobs/{id}/events")
     def events(id: str, after: int = Query(default=0, ge=0), tail: bool = False):

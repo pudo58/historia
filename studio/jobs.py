@@ -32,6 +32,16 @@ def summarize_job(row):
     return {**row, 'snapshot': slim}
 
 
+def pronounce(project, text):
+    """Apply the project's ``word = replacement`` pronunciation lines to text sent to the TTS."""
+    for line in project.get("pronunciation", "").splitlines():
+        if "=" in line:
+            word, replacement = line.split("=", 1)
+            if word.strip():
+                text = text.replace(word.strip(), replacement.strip())
+    return text
+
+
 class PauseAtBoundary(Exception):
     """Current shot is fully downloaded; no remote cancellation is implied."""
 
@@ -83,7 +93,7 @@ class StudioJobs:
                 raise KeyError(job_id)
             if job.status == 'abandoned':
                 return self.service.read(job)
-            if (job.kind not in {'outline', 'script', 'speech', 'keyframe', 'clip', 'image_review'} or
+            if (job.kind not in {'outline', 'script', 'speech', 'keyframe', 'clip', 'image_review', 'dialogue_test'} or
                     job.status not in {'reconciling', 'failed', 'interrupted', 'paused'} or
                     not self.remote_pending(job.result)):
                 raise ValueError('Chỉ bỏ lượt inference chưa đối chiếu, không bỏ tác vụ đang chạy local.')
@@ -112,23 +122,33 @@ class StudioJobs:
                 raise ValueError('Bảo trì runtime chưa rõ trạng thái; khôi phục runtime trước khi đổi host hoặc chạy recipe.')
 
     def optional_ready(self, host_id, name):
+        """Every file behind ``name`` (a group such as ``wan-s2v`` has several) is installed and checksum-checked."""
         from studio.installations import identity
-        saved = json.loads(self.hosts.setting(f'studio_optional:{host_id}:{name}') or '{}')
-        return bool(saved and saved.get('identity') == identity(self.hosts._require_host(host_id)) and
-                    saved.get('options') == self.hosts.options_for(host_id).model_dump())
+        from studio.packs import optional_members
+        current = identity(self.hosts._require_host(host_id))
+        options = self.hosts.options_for(host_id).model_dump()
+        for member in optional_members(name):
+            saved = json.loads(self.hosts.setting(f'studio_optional:{host_id}:{member}') or '{}')
+            if not (saved and saved.get('identity') == current and saved.get('options') == options):
+                return False
+        return True
 
     def install_optional(self, host_id, name):
         from studio.installations import identity
-        from studio.packs import OPTIONAL_MODEL_FILES, resolve_optional_model
-        if name not in OPTIONAL_MODEL_FILES:
-            raise ValueError('Model tùy chọn không thuộc Historia.')
+        from studio.packs import optional_members, resolve_optional_model
+        try:
+            members = optional_members(name)
+        except ValueError:
+            raise ValueError('Model tùy chọn không thuộc Historia.') from None
         self.host_idle(host_id)
         if self.installations.state(host_id)['status'] not in {'installed', 'verified', 'verify_failed'}:
             raise ValueError('Cần cài bộ nền trước khi thêm model tùy chọn.')
-        asset = resolve_optional_model(name, self.hosts.setting('hf_token'))
+        assets = [resolve_optional_model(member, self.hosts.setting('hf_token')) for member in members]
         host = self.hosts._require_host(host_id)
-        snapshot = {'asset': asset, 'identity': identity(host),
+        snapshot = {'assets': assets, 'group': name, 'identity': identity(host),
                     'options': self.hosts.options_for(host_id).model_dump()}
+        if len(assets) == 1:
+            snapshot['asset'] = assets[0]   # older readers of single-file jobs
         with self.service.sessions() as session:
             job = Job(host_id=host_id, kind='optional_model', input_hash=canonical_hash(snapshot), snapshot=snapshot)
             session.add(job)
@@ -137,28 +157,137 @@ class StudioJobs:
 
     async def execute_optional(self, job):
         from ghm.manifests import ModelAsset
-        from ghm.model_download import download
+        from ghm.model_download import download_many, model_item
         from studio.installations import identity
         from studio.installer import InstallExecutor
         from studio.packs import OPTIONAL_MODEL_FILES, check_model_access
-        asset = ModelAsset.model_validate(job.snapshot['asset'])
-        if asset.name not in OPTIONAL_MODEL_FILES:
+        assets = [ModelAsset.model_validate(raw) for raw in (job.snapshot.get('assets') or [job.snapshot['asset']])]
+        if not assets or any(asset.name not in OPTIONAL_MODEL_FILES for asset in assets):
             raise ValueError('Model tùy chọn không hợp lệ.')
         host = self.hosts._require_host(job.host_id)
         options = self.hosts.options_for(job.host_id)
         if job.snapshot['identity'] != identity(host) or job.snapshot['options'] != options.model_dump():
             raise ValueError('Host/cấu hình cài model đã đổi; không tải lên máy khác.')
-        await asyncio.to_thread(check_model_access, {'models':[job.snapshot['asset']], 'snapshots':[]}, self.hosts.setting('hf_token'))
+        token = self.hosts.setting('hf_token')
+        await asyncio.to_thread(check_model_access, {'models': [asset.model_dump(mode='json') for asset in assets],
+                                                     'snapshots': []}, token)
+        if any(asset.gated for asset in assets) and not token:
+            raise ValueError('Thêm token Hugging Face chỉ đọc trong Cài đặt trước khi tải model này.')
+        total = sum(asset.size_bytes or 0 for asset in assets)
+        self.event(job.id, f'Tải và kiểm tra checksum {len(assets)} file ({total / 1e9:.1f} GB): '
+                           + ', '.join(asset.name for asset in assets) + '.')
         executor = self.hosts.executor_for(host)
         try:
             locked = InstallExecutor(executor, options.root)
-            await download(locked, asset, options.comfy_root, self.hosts.setting('hf_token'), 14400)
+            # One file at a time: these are multi-GB files and the Pod's disk/network are shared with rendering.
+            await download_many(locked, [model_item(asset, options.comfy_root) for asset in assets],
+                                [options.comfy_root + '/models'], token, 14400, workers=1)
         finally:
             await executor.close()
-        self.hosts.save_setting(f'studio_optional:{job.host_id}:{asset.name}', json.dumps({
-            'identity': job.snapshot['identity'], 'options': job.snapshot['options'],
-            'sha256': asset.sha256, 'revision': asset.revision}))
-        self.event(job.id, f'Đã kiểm tra checksum model tùy chọn {asset.name}.')
+        for asset in assets:
+            self.hosts.save_setting(f'studio_optional:{job.host_id}:{asset.name}', json.dumps({
+                'identity': job.snapshot['identity'], 'options': job.snapshot['options'],
+                'sha256': asset.sha256, 'revision': asset.revision}))
+            self.event(job.id, f'Đã kiểm tra checksum model tùy chọn {asset.name}.')
+
+    def dialogue_test(self, project_id, scene_id, text, voice=None):
+        """Queue a one-line trial: the voice-over of ``text``, then Wan S2V animates the scene's approved
+        keyframe so the character says it. Nothing about the scene or project changes."""
+        from studio.tts_device import new_tts_device
+        project = self.service.project(project_id)
+        scene = next((s for s in project['scenes'] if s['id'] == scene_id), None)
+        text = ' '.join((text or '').split())
+        if not scene or not scene.get('keyframe_id') or not scene.get('keyframe_approved'):
+            raise ValueError('Chọn cảnh đã có ảnh được duyệt để thử nhân vật nói.')
+        if not 2 <= len(text) <= 400:
+            raise ValueError('Câu thoại cần từ 2 đến 400 ký tự (S2V thử tối đa khoảng 14 giây).')
+        voice = (voice or project.get('voice') or '').strip()
+        if not voice or len(voice) > 80:
+            raise ValueError('Chọn giọng cho dự án trước khi thử nhân vật nói.')
+        host_id = project.get('host_id')
+        if not host_id:
+            raise ValueError('Chọn GPU cho dự án trong phần Thiết lập.')
+        host = self.hosts._require_host(host_id)
+        if not host.pinned_fingerprint:
+            raise ValueError('Xác nhận fingerprint SSH trước khi dùng GPU.')
+        self.assert_no_abandoned_remote(host_id)
+        self.recipes.assert_recipes_idle(host_id)
+        if not self.installations.component_proven(host_id, ['tts']):
+            raise ValueError('Giọng đọc chưa sẵn sàng trên GPU này. Cần bản cài hoàn tất, đúng máy và đúng cấu hình.')
+        if not self.optional_ready(host_id, 'wan-s2v'):
+            raise ValueError('Cài nhóm model Wan2.2 S2V (Bộ AI & kiểm chứng → Model tùy chọn) và kiểm tra checksum trước.')
+        # A short 16:9-or-project-ratio draft: enough to judge the lip-sync without an hour of GPU time.
+        snapshot_project = {**project, 'render_profile': 'draft', 'tts_device': new_tts_device(project)}
+        snapshot = {'project': snapshot_project, 'scene': scene, 'request': {'text': text, 'voice': voice},
+                    'generation_version': GENERATION_VERSION,
+                    'workflow_hashes': {'wan_s2v': canonical_hash(load_graph('wan_s2v'))}}
+        hashed = canonical_hash({'kind': 'dialogue_test', 'host': host_id, 'scene': scene_id,
+                                 'keyframe': scene['keyframe_id'], 'text': text, 'voice': voice,
+                                 'workflow_hashes': snapshot['workflow_hashes']})
+        with self.service.sessions() as session:
+            from sqlalchemy import text as sql
+            session.execute(sql('BEGIN IMMEDIATE'))
+            if session.scalar(select(Job.id).where(Job.input_hash == hashed, Job.status.in_(ACTIVE))):
+                raise ValueError('Câu thoại này đang được thử; chờ tác vụ hiện tại xong.')
+            job = Job(project_id=project_id, scene_id=scene_id, host_id=host_id, kind='dialogue_test',
+                      snapshot=snapshot, input_hash=hashed)
+            session.add(job)
+            session.commit()
+        return self.service.read(job)
+
+    async def execute_dialogue_test(self, job):
+        from studio.media import mux_dialogue
+        from studio.packs import S2V_CHUNK_SECONDS, S2V_FPS, S2V_MAX_CHUNKS
+        project, scene, request = job.snapshot['project'], job.snapshot['scene'], job.snapshot['request']
+        def log(message):
+            return self.event(job.id, message)
+        def checkpoint(stage, value):
+            return self.checkpoint(job.id, stage, value)
+        limit = S2V_MAX_CHUNKS * S2V_CHUNK_SECONDS - 2 / S2V_FPS
+        state = self.service.require(Job, job.id).result
+        speech_id = state.get('dialogue_speech')
+        if speech_id and self.artifact_valid(speech_id):
+            audio = self.service.artifact_path(speech_id)
+        else:
+            audio = None
+            if state.get('speech_pending'):
+                # A previous attempt may still hold the remote TTS lock or have left its WAV behind.
+                audio = await self.backend.recover_speech(job)
+            if audio is None:
+                self.patch(job.id, result={**self.service.require(Job, job.id).result, 'speech_pending': True})
+                try:
+                    audio = await self.backend.speech(job, pronounce(project, request['text']), request['voice'], log)
+                except ValueError:
+                    self.patch(job.id, result={**self.service.require(Job, job.id).result, 'speech_pending': False})
+                    raise
+            artifact = self.service.artifact(audio, job.project_id, 'dialogue-speech.wav', job.id,
+                                             {'duration': probe(audio)['duration']})
+            self.patch(job.id, result={**self.service.require(Job, job.id).result, 'speech_pending': False,
+                                      'dialogue_speech': artifact['id']})
+        seconds = probe(audio)['duration']
+        if seconds > limit:
+            raise ValueError(f'Giọng đọc dài {seconds:.1f} giây; bản thử S2V chỉ nhận tối đa {limit:.1f} giây. Rút ngắn câu thoại.')
+        log(f'Giọng đọc {seconds:.1f} giây; Wan S2V sẽ làm nhân vật nói câu này.')
+        with self.service.sessions() as session:
+            done = session.scalar(select(Artifact).where(Artifact.job_id == job.id, Artifact.name == 'dialogue-test.mp4'))
+        if done:
+            self.service.artifact_path(done.id)
+            self.patch(job.id, result={**self.service.require(Job, job.id).result, 'artifact_ids': [done.id]})
+            return
+        prompt = (f"{project['style']}. {project['era']}. {project['location']}. {scene['visual_prompt']}. "
+                  'The person in the frame speaks to the camera, natural lip movements that follow the voice, '
+                  'subtle head and eyebrow movement, calm expression. No text or subtitles.')
+        keyframe = self.service.artifact_path(scene['keyframe_id'])
+        async with self.backend.generation_session(job):
+            clip = await self.backend.generate(self.service.require(Job, job.id), 'wan_s2v', prompt, [keyframe, audio],
+                                               42, 'draft', log, checkpoint, 'dialogue-0')
+        target = self.service.job_directory(job.id) / 'dialogue-test.mp4'
+        await asyncio.to_thread(mux_dialogue, clip, audio, target)
+        artifact = self.service.artifact(target, job.project_id, 'dialogue-test.mp4', job.id,
+                                         {'duration': seconds, 'scene_id': job.scene_id, 'text': request['text'],
+                                          'voice': request['voice'], 'keyframe_id': scene['keyframe_id']})
+        self.patch(job.id, result={**self.service.require(Job, job.id).result, 'artifact_ids': [artifact['id']]})
+        log('Đã ghép tiếng vào clip nhân vật nói. Đây chỉ là bản thử, chưa đưa vào cảnh của dự án.')
 
     @staticmethod
     def remote_pending(result):
@@ -967,6 +1096,8 @@ class StudioJobs:
             return await execute(self, job)
         if job.kind == 'video_test':
             return await self.installations.execute_video_test(job)
+        if job.kind == 'dialogue_test':
+            return await self.execute_dialogue_test(job)
         if job.kind == 'rife':
             return await self.execute_rife(job)
         if job.kind == 'image_review':
@@ -1018,12 +1149,7 @@ class StudioJobs:
                     row.data = {**row.data, "outline": outline, "outline_approved": False}
                     session.commit()
         elif job.kind == "speech":
-            text = scene["narration"]
-            for line in project.get("pronunciation", "").splitlines():
-                if "=" in line:
-                    word, replacement = line.split("=", 1)
-                    if word.strip():
-                        text = text.replace(word.strip(), replacement.strip())
+            text = pronounce(project, scene["narration"])
             state = self.service.require(Job, job.id).result
             if state.get('speech_pending'):
                 recovered = await self.backend.recover_speech(job)
