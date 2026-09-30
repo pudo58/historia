@@ -16,6 +16,7 @@ from ghm.remote_service import manage
 from ghm.schemas import HostOptions
 from studio.install_checks import inventory, summarize
 from studio.packs import COMFY_COMMIT, check_model_access, check_remote_model_access
+from studio.python_env import NO_PYTHON_EXIT, ensure_python
 
 
 def private_python(python):
@@ -40,6 +41,9 @@ def install_failure(result):
         return 'Kết nối tới kho package bị gián đoạn.'
     if result.rc == 44:
         return 'Môi trường đã có dữ liệu không thuộc Studio; không ghi đè.'
+    if result.rc == NO_PYTHON_EXIT:
+        return ('Pod chưa có Python 3.11/3.12 và Historia không tự cài được (cần mạng tới pypi.org và github.com, '
+                'hoặc quyền ghi vào thư mục cài). Cài python3.12 trên Pod rồi bấm cài lại.')
     if 'permission denied' in text or 'read-only file system' in text:
         return 'Không có quyền ghi vào thư mục cài (quyền hoặc ổ chỉ đọc).'
     tail = redacted_tail(result.stdout + '\n' + result.stderr)
@@ -215,20 +219,21 @@ async def install(hosts, job, lock: dict, log) -> dict:
         # Adopt mode must not quietly overwrite an unrelated pre-existing venv.
         marker = directory + '/.studio-env-owned'
         d, py = q(directory), q(directory + '/bin/python')
+        host_python = q(py3)
         get_pip = ("import sys,urllib.request;exec(urllib.request.urlopen("
                    "'https://bootstrap.pypa.io/get-pip.py',timeout=120).read())")
         await command(
             f"if [ -d {d} ] && [ -n \"$(ls -A {d})\" ] && [ ! -f {q(marker)} ]; then exit 44; fi; "
             f"mkdir -p {d} && touch {q(marker)} && trap 'touch {marker}' EXIT && "
-            f"echo \"python3: $(command -v python3) $(python3 -V 2>&1)\"; "
-            f"if python3 -m venv --clear {d} && {py} -m pip --version; then :; else "
+            f"echo \"python: {host_python} $({host_python} -V 2>&1)\"; "
+            f"if {host_python} -m venv --clear {d} && {py} -m pip --version; then :; else "
             f"echo 'step 2: installing the versioned venv package'; "
-            f"V=$(python3 -c 'import sys;print(f\"{{sys.version_info[0]}}.{{sys.version_info[1]}}\")'); "
+            f"V=$({host_python} -c 'import sys;print(f\"{{sys.version_info[0]}}.{{sys.version_info[1]}}\")'); "
             f"if command -v apt-get >/dev/null; then S=''; [ \"$(id -u)\" = 0 ] || S='sudo -n'; "
             f"$S env DEBIAN_FRONTEND=noninteractive apt-get install -y python$V-venv python3-pip >/dev/null 2>&1 || true; fi; "
-            f"if python3 -m venv --clear {d} && {py} -m pip --version; then :; else "
+            f"if {host_python} -m venv --clear {d} && {py} -m pip --version; then :; else "
             f"echo 'step 3: bootstrap pip into a bare venv'; "
-            f"python3 -m venv --clear --without-pip {d} && {py} -c {q(get_pip)} --no-warn-script-location && {py} -m pip --version; fi; fi "
+            f"{host_python} -m venv --clear --without-pip {d} && {py} -c {q(get_pip)} --no-warn-script-location && {py} -m pip --version; fi; fi "
             f"&& touch {q(marker)}", stage=stage + ' ' + directory.rsplit('/', 1)[-1])
     try:
         await check_remote_model_access(executor, lock, hosts.setting('hf_token'))
@@ -252,10 +257,13 @@ async def install(hosts, job, lock: dict, log) -> dict:
             raise ValueError('Port đang có dịch vụ nhưng không xác nhận được queue ComfyUI. Không sửa môi trường đó; kiểm tra dịch vụ hoặc chọn port khác.')
         log("Kiểm tra volume, Python, quyền cài đặt và môi trường có sẵn.")
         required = current.get('service_required_bytes', current['required_bytes'])
-        await command(f"mkdir -p {q(root)} && python3 -c 'import sys,shutil; assert sys.version_info >= (3,11); assert shutil.disk_usage(sys.argv[1]).free > int(sys.argv[2]), \"Insufficient disk space\"' {q(root)} {required}", 30)
+        await command(f"mkdir -p {q(root)}", 30)
+        # Python 3.11/3.12 for the virtualenvs: the Pod's own if suitable, else one installed next to it.
+        py3 = await ensure_python(command, root, log)
+        await command(f"{q(py3)} -c 'import sys,shutil; assert sys.version_info >= (3,11); assert shutil.disk_usage(sys.argv[1]).free > int(sys.argv[2]), \"Insufficient disk space\"' {q(root)} {required}", 30)
         if not options.adopt_existing:
             await command('touch ' + q(root + '/.studio-owned'), 15)
-        deps = await executor.run("command -v git && command -v ffmpeg && command -v espeak-ng && python3 -c 'import venv,ensurepip'", 30)
+        deps = await executor.run("command -v git && command -v ffmpeg && command -v espeak-ng && " + q(py3) + " -c 'import venv,ensurepip'", 30)
         if deps.rc:
             log('Bổ sung công cụ hệ thống còn thiếu: git/FFmpeg/espeak-ng/venv. Không thay đổi môi trường Python của ComfyUI.')
             await command("if command -v apt-get >/dev/null; then "

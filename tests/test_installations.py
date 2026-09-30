@@ -2,6 +2,8 @@ import asyncio
 import copy
 import json
 import shlex
+import shutil
+import subprocess
 import time
 
 import pytest
@@ -224,7 +226,7 @@ def test_changed_identity_and_expired_preview_rejected(install_app):
 
 
 @pytest.mark.parametrize('change', [
-    {'free_bytes':0}, {'writable':False}, {'architecture':'aarch64'}, {'python':[3,10,0]},
+    {'free_bytes':0}, {'writable':False}, {'architecture':'aarch64'},
     {'root_nonempty':True}, {'port_busy':True}, {'tools':{}},
     {'files':[{'state':'conflict','size_bytes':5}]},
 ])
@@ -457,7 +459,11 @@ def test_disconnect_is_reconciling_not_success(install_app, monkeypatch):
     assert client.get(f'/api/studio/hosts/{hid}/installation').json()['status']=='interrupted'
 
 
-def test_actual_installer_orchestrates_isolated_environments(install_app, monkeypatch):
+MANAGED_PYTHON = '/workspace/historia/python/cpython-3.12.5-linux-x86_64-gnu/bin/python3.12'
+
+
+@pytest.mark.parametrize('interpreter, source', [('/usr/bin/python3', 'system'), (MANAGED_PYTHON, 'managed')])
+def test_actual_installer_orchestrates_isolated_environments(install_app, monkeypatch, interpreter, source):
     import shlex
     from types import SimpleNamespace
 
@@ -469,6 +475,9 @@ def test_actual_installer_orchestrates_isolated_environments(install_app, monkey
         async def run(self, command, timeout=None, on_output=None):
             command = shlex.split(command)[-1] if command.startswith('flock ') else command
             commands.append(command)
+            if 'PYTHON_READY' in command:
+                return CommandResult(0, f'PYTHON_READY={interpreter}\nPYTHON_SOURCE={source}\nPYTHON_VERSION=3.12.5\n'
+                                     f'PYTHON_INSTALLED={int(source == "managed")}\n', '')
             if command.startswith(('test -x ', 'test -f ')):
                 return CommandResult(1, '', '')
             return CommandResult(0, '', '')
@@ -511,10 +520,19 @@ def test_actual_installer_orchestrates_isolated_environments(install_app, monkey
     job = SimpleNamespace(host_id=hid, snapshot={'options':options.model_dump()})
     lock = sample_lock()
     lock['environments'] = {'llm':'transformers==5.17.0','tts':'vieneu==3.8.3'}
-    result = asyncio.run(actual_install(hosts, job, lock, lambda line: None))
+    logs = []
+    result = asyncio.run(actual_install(hosts, job, lock, logs.append))
     assert not result['verified']
-    assert any('/llm-venv' in c and 'python3 -m venv' in c for c in commands)
-    assert any('/tts-venv' in c and 'python3 -m venv' in c for c in commands)
+    venv_commands = [c for c in commands if '-venv' in c and 'venv --clear' in c]
+    assert any('/llm-venv' in c for c in venv_commands) and any('/tts-venv' in c for c in venv_commands)
+    # Every venv (and the disk/venv checks) uses the interpreter the Python step chose, never a bare python3.
+    assert all(f'{interpreter} -m venv' in c and ' python3 -m venv' not in c for c in venv_commands)
+    assert any(f'{interpreter} -c' in c and 'shutil.disk_usage' in c for c in commands)
+    assert any(f'{interpreter} -c' in c and 'import venv,ensurepip' in c for c in commands)
+    assert any('Python 3.12.5' in line for line in logs)
+    if shutil.which('sh'):   # the generated shell must at least parse
+        for c in venv_commands:
+            assert subprocess.run(['sh', '-n', '-c', c], capture_output=True).returncode == 0
     assert any('torch==2.11.0' in c for c in commands)
     assert not any('kill ' in c or 'nvidia-driver' in c for c in commands)
 
@@ -549,6 +567,8 @@ def run_real_install(install_app, monkeypatch, *, parallel, fail=None):
                 await asyncio.sleep(0.05)
                 return CommandResult(0 if parallel else 1, 'historia-channel-ok' if parallel else '', '')
             inner = shlex.split(command)[-1] if command.startswith('flock ') else command
+            if 'PYTHON_READY' in inner:
+                return CommandResult(0, 'PYTHON_READY=/usr/bin/python3\nPYTHON_SOURCE=system\nPYTHON_VERSION=3.12.3\nPYTHON_INSTALLED=0\n', '')
             if inner.startswith(('test -x ', 'test -f ')):
                 return CommandResult(1, '', '')
             if 'git -C' in inner and 'checkout --detach' in inner:
