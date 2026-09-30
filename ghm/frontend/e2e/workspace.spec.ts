@@ -395,10 +395,12 @@ test('character-speaks trial: blocked until S2V is installed, then sends one lin
   const panel=page.getByRole('region',{name:'Thử nhân vật nói'});
   await expect(panel).toBeVisible();
   await expect(panel.getByText(/Cài nhóm model Wan2\.2 S2V/)).toBeVisible();
+  await expect(panel.getByRole('button',{name:/Cài Wan2\.2 S2V/})).toBeVisible();   // install is offered right here, not only in step 1
   await expect(panel.getByRole('button',{name:/Thử nhân vật nói · dùng GPU/})).toBeDisabled();
   installed=true;
   await page.reload();
   await expect(panel.getByText(/Cài nhóm model Wan2\.2 S2V/)).toHaveCount(0);
+  await expect(panel.getByRole('button',{name:/Cài Wan2\.2 S2V/})).toHaveCount(0);
   await expect(panel.getByLabel(/Cảnh \(dùng ảnh đã tạo của cảnh\)/)).toContainText('Cảnh 3');
   const send=panel.getByRole('button',{name:/Thử nhân vật nói · dùng GPU/});
   await expect(send).toBeDisabled();                       // no line typed yet

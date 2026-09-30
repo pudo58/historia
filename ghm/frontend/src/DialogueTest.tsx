@@ -2,6 +2,7 @@ import {useState} from 'react';
 import {useQuery, useQueryClient} from '@tanstack/react-query';
 import {api, base, type Job, type Project} from './api';
 import {media, names, read} from './workspace';
+import OptionalModels from './OptionalModels';
 
 const active=['queued','running','cancelling','reconciling'];
 const MAX_CHARS=400;
@@ -29,14 +30,15 @@ export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
   let blocker='';
-  if(!p.host_id)blocker='Chọn GPU cho dự án trong Thiết lập trước.';
+  if(!p.host_id)blocker='Chọn và lưu máy GPU cho dự án ở bước “1. Ý tưởng” trước.';
   else if(!scenes.length)blocker='Cần ít nhất một cảnh đã có ảnh (tạo ảnh ở bước sản xuất trước).';
-  else if(models.isSuccess&&!ready)blocker='Cài nhóm model Wan2.2 S2V trong Thiết lập dự án → “Model GPU tùy chọn” trước.';
+  else if(models.isSuccess&&!ready)blocker='Cài nhóm model Wan2.2 S2V trước: bấm nút cài ngay bên dưới (cũng có ở bước “1. Ý tưởng” → “Model GPU tùy chọn”).';
   return <section className="panel" aria-label="Thử nhân vật nói">
     <h2>Thử nhân vật nói</h2>
     <p>Chọn một cảnh đã có ảnh (không cần duyệt), gõ <strong>một câu thoại tiếng Việt</strong>. Historia tạo giọng đọc, rồi Wan2.2 S2V làm nhân vật trong ảnh nói câu đó (miệng chuyển động theo tiếng). Đây là bản thử để bạn đánh giá; nó không thay clip hay lời dẫn của cảnh.</p>
     <p className="alert notice">S2V dùng bộ mã hóa âm thanh tiếng Anh, nên độ khớp môi với tiếng Việt chưa được đảm bảo — đó chính là điều bản thử này kiểm tra. Bản thử dài tối đa khoảng 14 giây, chất lượng nháp, và dùng GPU đang thuê (chưa có số đo thời gian trên Pod của bạn; lần đầu còn phải nạp model 14B).</p>
     {blocker&&<p role="status" className="alert warning">{blocker}</p>}
+    {models.isSuccess&&!ready&&<OptionalModels hostId={p.host_id} open/>}
     <fieldset disabled={busy||running||!!blocker}>
       <div className="form-grid">
         <label>Cảnh (dùng ảnh đã tạo của cảnh)
