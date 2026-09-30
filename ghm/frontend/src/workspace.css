@@ -59,3 +59,5 @@
 
 .dialogue-trial{margin-top:12px;padding-top:8px;border-top:1px solid var(--line,#ddd)}
 .dialogue-trial video{display:block;max-width:100%;width:min(720px,100%);border-radius:8px;background:#000}
+.voice-row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.35rem 0}
+.voice-row audio{max-width:100%}

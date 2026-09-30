@@ -17,6 +17,7 @@ from studio.schemas import (
     ChainFrameApproval,
     CharacterInput,
     DialogueTestInput,
+    VoiceAuditionInput,
     InstallConsent,
     JobInput,
     KeyframeBatchApproval,
@@ -359,6 +360,10 @@ def router(service, jobs, host_lock):
     @api.post('/projects/{id}/dialogue-test', status_code=201)
     def dialogue_test(id: str, payload: DialogueTestInput):
         return jobs.dialogue_test(id, payload.scene_id, payload.text, payload.voice)
+
+    @api.post('/projects/{id}/voice-audition', status_code=201)
+    def voice_audition(id: str, payload: VoiceAuditionInput):
+        return jobs.voice_audition(id, payload.text)
 
     @api.get("/jobs/{id}/events")
     def events(id: str, after: int = Query(default=0, ge=0), tail: bool = False):

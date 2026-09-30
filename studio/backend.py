@@ -432,6 +432,14 @@ print(json.dumps(data))
         result = await self._worker(job, "speech", {"text": text, "voice": voice, "tts_device": device}, [], log)
         return Path(result["local_audio"])
 
+    async def audition(self, job, text: str, log) -> list[dict]:
+        """Synthesize ``text`` in every preset voice on the GPU; returns [{voice, label, path, duration}]."""
+        from studio.tts_device import snapshot_tts_device
+        device = snapshot_tts_device(job.snapshot.get("project"))
+        log("Nghe thử giọng: backbone " + ("GPU" if device == "cuda" else "CPU") + ", đọc cùng một câu bằng mọi giọng có sẵn.")
+        result = await self._worker(job, "speech", {"text": text, "audition": True, "tts_device": device}, [], log)
+        return result["audition"]
+
     async def _worker(self, job, mode: str, payload: dict, images: list[Path], log) -> dict:
         options = self.hosts.options_for(job.host_id)
         async with self.connection(job.host_id) as (executor, client):
@@ -461,6 +469,17 @@ print(json.dumps(data))
             if not marker:
                 raise ValueError("Dịch vụ AI không trả kết quả có cấu trúc.")
             output = json.loads(marker)
+            if mode == "speech" and payload.get("audition"):
+                from studio.remote_worker import inspect_wav
+                folder = self.service.job_directory(job.id)
+                folder.mkdir(parents=True, exist_ok=True)
+                for entry in output["audition"]:
+                    local = folder / Path(entry["file"]).name
+                    await executor.download(entry["file"], str(local))
+                    if inspect_wav(local)["sha256"] != entry["sha256"]:
+                        raise ValueError("Audio giọng thử tải về không khớp checksum đã đo từ worker.")
+                    entry["path"] = str(local)
+                return output
             if mode == "speech":
                 target = self.service.job_directory(job.id) / "speech.wav"
                 await executor.download(config["output"], str(target))

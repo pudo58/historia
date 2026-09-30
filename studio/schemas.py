@@ -217,6 +217,10 @@ class DialogueTestInput(StrictModel):
     voice: str | None = Field(default=None, max_length=80)
 
 
+class VoiceAuditionInput(StrictModel):
+    text: str = Field(min_length=2, max_length=300)
+
+
 class ProductionRunInput(StrictModel):
     idempotency_key: str = Field(min_length=1, max_length=120)
     scene_revisions: dict[str, int]

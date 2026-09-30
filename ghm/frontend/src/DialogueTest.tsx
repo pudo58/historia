@@ -6,12 +6,15 @@ import OptionalModels from './OptionalModels';
 
 const active=['queued','running','cancelling','reconciling'];
 const MAX_CHARS=400;
+// Preset names shipped with the installed VieNeu model; the audition lists whatever the GPU actually has.
+const VOICES:[string,string][]=[['','Giọng của dự án'],['Binh','Bình · nam Bắc'],['Tuyen','Tuyên · nam Bắc'],['Vinh','Vĩnh · nam Nam'],['Doan','Đoan · nữ Nam'],['Ly','Ly · nữ Bắc'],['Ngoc','Ngọc · nữ Bắc']];
 
 export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[]}){
   const client=useQueryClient();
   const scenes=p.scenes.filter(s=>s.keyframe_id);
   const [sceneId,setSceneId]=useState('');
   const [text,setText]=useState('');
+  const [voice,setVoice]=useState('');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const models=useQuery({queryKey:['optional-models',p.host_id],enabled:!!p.host_id,
@@ -25,7 +28,7 @@ export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[
     if(!chosen)return;
     setBusy(true);setError('');
     try{
-      await api(`${base}/projects/${p.id}/dialogue-test`,{scene_id:chosen.id,text:text.trim()});
+      await api(`${base}/projects/${p.id}/dialogue-test`,{scene_id:chosen.id,text:text.trim(),...(voice?{voice}:{})});
       await client.invalidateQueries();
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
@@ -46,9 +49,12 @@ export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[
             {scenes.map(s=><option key={s.id} value={s.id}>{s.position}. {s.title}</option>)}
           </select>
         </label>
+        <label>Giọng của câu này
+          <select value={voice} onChange={e=>setVoice(e.target.value)}>{VOICES.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select>
+        </label>
         <label>Câu thoại của nhân vật
           <textarea rows={3} maxLength={MAX_CHARS} value={text} onChange={e=>setText(e.target.value)} placeholder="Ví dụ: Quân ta đã thắng lớn trên sông Bạch Đằng!"/>
-          <small>{text.trim().length}/{MAX_CHARS} ký tự · giọng: {p.voice||'mặc định của dự án'}</small>
+          <small>{text.trim().length}/{MAX_CHARS} ký tự · giọng: {voice||p.voice||'mặc định của dự án'}</small>
         </label>
       </div>
       <button className="primary" disabled={text.trim().length<2} onClick={()=>void start()}>{busy?'Đang tạo tác vụ…':running?'Đang thử…':'Thử nhân vật nói · dùng GPU'}</button>

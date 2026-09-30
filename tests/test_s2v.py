@@ -482,3 +482,49 @@ async def test_clip_that_does_not_cover_the_voice_or_has_wrong_fps_is_rejected(t
         comfy = Comfy(service, job, monkeypatch, video_seconds=video[0], fps=video[1])
         with pytest.raises(ValueError, match=message):
             await comfy.run(jobs, keyframe, voice, f'dialogue-{video[1]}')
+
+
+@pytest.mark.asyncio
+async def test_voice_audition_saves_one_playable_artifact_per_voice(studio, monkeypatch):
+    client, service, jobs, host = studio
+    pid, _sid, _key = make_scene(service, host)
+    response = client.post(f'/api/studio/projects/{pid}/voice-audition', json={'text': 'Các khanh bình thân.'})
+    assert response.status_code == 201
+    assert client.post(f'/api/studio/projects/{pid}/voice-audition', json={'text': 'Câu khác.'}).status_code == 409   # one at a time
+    job = service.require(Job, response.json()['id'])
+    seen = []
+    async def audition(current, text, log):
+        seen.append(text)
+        return [{'voice': name, 'label': name, 'duration': 1.0,
+                 'path': str(wav(service.job_directory(current.id) / f'audition-{name}.wav', 1.0))} for name in ('Binh', 'Ly')]
+    monkeypatch.setattr(jobs.backend, 'audition', audition)
+    await jobs.execute_voice_audition(job)
+    voices = service.require(Job, job.id).result['voices']
+    assert seen == ['Các khanh bình thân.'] and [v['voice'] for v in voices] == ['Binh', 'Ly']
+    assert service.artifact_path(voices[1]['artifact_id']).name == 'audition-Ly.wav'
+    await jobs.execute_voice_audition(job)      # a retry after success does not synthesize again
+    assert len(seen) == 1
+
+
+def test_voice_audition_needs_a_gpu_and_a_real_line(studio):
+    client, service, _jobs, host = studio
+    pid, _sid, _key = make_scene(service, host)
+    assert client.post(f'/api/studio/projects/{pid}/voice-audition', json={'text': ' '}).status_code in (400, 422)
+    bare = service.create_project(ProjectInput(title='Không GPU', topic='x'))
+    assert client.post(f'/api/studio/projects/{bare["id"]}/voice-audition', json={'text': 'Xin chào.'}).status_code == 409
+
+
+def test_worker_auditions_every_preset_voice_the_model_lists(tmp_path):
+    from studio.remote_worker import audition_voices
+    class Model:
+        def list_preset_voices(self):
+            return [('Bình', 'Binh'), ('Ly', 'Ly')]
+        def get_preset_voice(self, name):
+            return name
+        def infer(self, text, voice):
+            return voice
+        def save(self, audio, path):
+            wav(Path(path), 1.0 if audio == 'Binh' else 1.5)
+    result = audition_voices(Model(), 'Xin chào', str(tmp_path / 'speech.wav'))['audition']
+    assert [(v['voice'], v['duration']) for v in result] == [('Binh', 1.0), ('Ly', 1.5)]
+    assert all(Path(v['file']).name.startswith('audition-') for v in result)

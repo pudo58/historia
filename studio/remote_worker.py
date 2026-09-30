@@ -107,6 +107,21 @@ def local_codec_path(repo_id, filename="model.onnx"):
     return None
 
 
+def audition_voices(model, text, output):
+    """The same line in every preset voice the loaded model ships, one WAV per voice (audition-N.wav)."""
+    output = Path(output)
+    voices = []
+    for index, (label, voice_id) in enumerate(model.list_preset_voices()):
+        path = output.with_name(f"audition-{index:02d}.wav")
+        model.save(model.infer(text=text, voice=model.get_preset_voice(voice_id)), str(path))
+        measured = inspect_wav(path)
+        voices.append({"voice": voice_id, "label": label, "file": str(path),
+                       "duration": measured["duration"], "sha256": measured["sha256"]})
+    if not voices:
+        raise RuntimeError("Model giọng đọc không có giọng preset nào.")
+    return {"audition": voices}
+
+
 def main() -> None:
     config = json.load(sys.stdin)
     root = Path(config["root"])
@@ -168,6 +183,11 @@ def main() -> None:
                 raise RuntimeError("Backbone giọng đọc không nằm trên CUDA. Không ghi kết quả giả.")
             load_seconds = round(time.monotonic() - load_started, 3)
             model.use_chat_format = True
+            if config.get("audition"):
+                result = audition_voices(model, config["text"], config["output"])
+                result.update({"vieneu_version": version("vieneu"), "requested_device": requested})
+                print("STUDIO_RESULT=" + json.dumps(result, ensure_ascii=False))
+                return
             voice_name = config.get("voice", "default")
             voice = model.get_preset_voice(None if voice_name == "default" else voice_name)
             synth_started = time.monotonic()

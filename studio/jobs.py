@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from contextlib import AsyncExitStack, nullcontext
 from datetime import UTC, datetime
 
@@ -236,6 +237,54 @@ class StudioJobs:
             session.add(job)
             session.commit()
         return self.service.read(job)
+
+    def voice_audition(self, project_id, text):
+        """Queue an audition: one line read in every preset voice of the GPU's TTS model, for the user to pick by ear."""
+        from studio.tts_device import new_tts_device
+        project = self.service.project(project_id)
+        text = ' '.join((text or '').split())
+        if not 2 <= len(text) <= 300:
+            raise ValueError('Câu nghe thử cần từ 2 đến 300 ký tự.')
+        host_id = project.get('host_id')
+        if not host_id:
+            raise ValueError('Chọn GPU cho dự án ở bước Ý tưởng.')
+        host = self.hosts._require_host(host_id)
+        if not host.pinned_fingerprint:
+            raise ValueError('Xác nhận fingerprint SSH trước khi dùng GPU.')
+        self.assert_no_abandoned_remote(host_id)
+        self.recipes.assert_recipes_idle(host_id)
+        if not self.installations.component_proven(host_id, ['tts']):
+            raise ValueError('Giọng đọc chưa sẵn sàng trên GPU này. Cần bản cài hoàn tất, đúng máy và đúng cấu hình.')
+        snapshot = {'project': {**project, 'tts_device': new_tts_device(project)}, 'request': {'text': text},
+                    'generation_version': GENERATION_VERSION}
+        hashed = canonical_hash({'kind': 'voice_audition', 'host': host_id, 'text': text, 'stamp': str(time.time_ns())})
+        with self.service.sessions() as session:
+            from sqlalchemy import text as sql
+            session.execute(sql('BEGIN IMMEDIATE'))
+            if session.scalar(select(Job.id).where(Job.project_id == project_id, Job.kind == 'voice_audition',
+                                                    Job.status.in_(ACTIVE))):
+                raise ValueError('Đang có một lượt nghe thử giọng; chờ nó xong.')
+            job = Job(project_id=project_id, host_id=host_id, kind='voice_audition', snapshot=snapshot, input_hash=hashed)
+            session.add(job)
+            session.commit()
+        return self.service.read(job)
+
+    async def execute_voice_audition(self, job):
+        def log(message):
+            return self.event(job.id, message)
+        request = job.snapshot['request']
+        state = self.service.require(Job, job.id).result
+        if state.get('voices'):
+            return
+        entries = await self.backend.audition(job, pronounce(job.snapshot['project'], request['text']), log)
+        voices = []
+        for entry in entries:
+            artifact = self.service.artifact(Path(entry['path']), job.project_id, f"audition-{entry['voice']}.wav", job.id,
+                                             {'voice': entry['voice'], 'label': entry['label'], 'duration': entry['duration']})
+            voices.append({'voice': entry['voice'], 'label': entry['label'], 'artifact_id': artifact['id'],
+                           'duration': entry['duration']})
+        self.patch(job.id, result={**self.service.require(Job, job.id).result, 'voices': voices, 'text': request['text']})
+        log(f'Đã đọc câu thử bằng {len(voices)} giọng. Nghe rồi chọn giọng cho dự án hoặc cho từng câu thoại.')
 
     async def execute_dialogue_test(self, job):
         from studio.media import mux_dialogue
@@ -1100,6 +1149,8 @@ class StudioJobs:
             return await self.installations.execute_video_test(job)
         if job.kind == 'dialogue_test':
             return await self.execute_dialogue_test(job)
+        if job.kind == 'voice_audition':
+            return await self.execute_voice_audition(job)
         if job.kind == 'rife':
             return await self.execute_rife(job)
         if job.kind == 'image_review':

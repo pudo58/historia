@@ -410,3 +410,17 @@ test('character-speaks trial: blocked until S2V is installed, then sends one lin
     {path:'/api/studio/projects/p/dialogue-test',body:{scene_id:'s2',text:'Quân ta đã thắng lớn!'}}]);
   expect(state.errors).toEqual([]);
 });
+
+test('voice audition: asks for one line and plays back every voice from the finished job',async({page})=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project,{host_id:'h',voice:'default'});
+  await page.route('**/api/studio/hosts/h/optional-models',route=>route.fulfill({json:{'wan-s2v':true}}));
+  await page.goto('/?page=projects&project=p&tab=video');
+  const panel=page.getByRole('region',{name:'Nghe thử giọng'});
+  await expect(panel).toBeVisible();
+  await panel.getByLabel(/Câu nghe thử/).fill('Các khanh bình thân.');
+  await panel.getByRole('button',{name:/Nghe thử mọi giọng/}).click();
+  await expect.poll(()=>state.bodies.filter(b=>b.path.endsWith('/voice-audition'))).toEqual([
+    {path:'/api/studio/projects/p/voice-audition',body:{text:'Các khanh bình thân.'}}]);
+  expect(state.errors).toEqual([]);
+});
