@@ -57,7 +57,7 @@ def test_hf_token_persists_in_database_and_is_never_returned(tmp_path) -> None:
         assert client.post("/api/settings/hf-token", json={"token": token}).status_code == 200
     import sqlite3
     rows = sqlite3.connect(tmp_path / "api.db").execute("select name, encrypted_value from local_settings").fetchall()
-    assert [r[0] for r in rows] == ["hf_token"] and token not in str(rows)  # stored encrypted
+    assert sorted(r[0] for r in rows) == ["hf_token", "remote_access_token"] and token not in str(rows)  # stored encrypted
     # A restarted app reads the same encrypted row: no need to enter the token again.
     with TestClient(app()) as client:
         body = client.get("/api/settings").json()

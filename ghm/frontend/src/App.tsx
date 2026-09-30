@@ -7,6 +7,7 @@ import { JobList } from './LegacyProjectView';
 import ProjectForm from './ProjectForm';
 import ProjectLibrary from './ProjectLibrary';
 import ProjectView from './ProjectView';
+import RemoteAccess from './RemoteAccess';
 import RunPodMonitor, { useRunPod, money as usd, uptime as upFmt } from './RunPodMonitor';
 import { Badge } from './ui';
 import { navigate, useLocationState } from './workspace';
@@ -48,7 +49,7 @@ export default function App() {
       {projects.isLoading ? <div className="project-loading" role="status"><span>Đang mở thư viện dự án…</span><div className="project-grid" aria-hidden="true">{[1,2,3].map(n=><div className="project-skeleton" key={n}/>)}</div></div> : <ProjectLibrary projects={projects.data || []} open={setProjectId}/>}</>}
     {page === 'projects' && projectId && (project.data ? <ProjectView key={projectId} project={project.data} hosts={hosts.data || []} jobs={(jobs.data || []).filter(j => j.project_id === projectId)} run={run} busy={busy} error={error} back={() => setProjectId(null)}/> : <p>Đang tải dự án…</p>)}
     {page === 'jobs' && <><div className="page-heading"><div><p className="eyebrow">SẢN XUẤT</p><h1>Tác vụ</h1><p>Hàng đợi, kết quả và nhật ký của từng công đoạn.</p></div></div><JobList jobs={jobs.data || []} run={run}/></>}
-    {page === 'gpu' && <><div className="page-heading"><div><p className="eyebrow">THIẾT LẬP MỘT LẦN</p><h1>Máy GPU của bạn</h1><p>Nhập SSH → đối chiếu fingerprint → kiểm tra máy → cài bộ AI.</p></div><button className="primary" onClick={()=>setPage('packs')}>Cài bộ Video lịch sử →</button></div><RunPodMonitor/><div className="alert warning">Dừng tác vụ hay đóng trình duyệt không dừng tiền thuê GPU — dừng Pod bằng nút "Dừng" ở bảng RunPod phía trên hoặc tại RunPod. Bộ AI và giọng đọc cài ở trang Bộ AI & kiểm chứng; phần bên dưới dành cho thao tác kỹ thuật chuyên sâu.</div><div className="gpu-legacy"><GpuManager/></div></>}
+    {page === 'gpu' && <><div className="page-heading"><div><p className="eyebrow">THIẾT LẬP MỘT LẦN</p><h1>Máy GPU của bạn</h1><p>Nhập SSH → đối chiếu fingerprint → kiểm tra máy → cài bộ AI.</p></div><button className="primary" onClick={()=>setPage('packs')}>Cài bộ Video lịch sử →</button></div><RunPodMonitor/><div className="alert warning">Dừng tác vụ hay đóng trình duyệt không dừng tiền thuê GPU — dừng Pod bằng nút "Dừng" ở bảng RunPod phía trên hoặc tại RunPod. Bộ AI và giọng đọc cài ở trang Bộ AI & kiểm chứng; phần bên dưới dành cho thao tác kỹ thuật chuyên sâu.</div><div className="gpu-legacy"><GpuManager/></div><RemoteAccess/></>}
     {page === 'packs' && <InstallPanel/>}
     <footer className="app-footer">HISTORIA / Lịch sử cần được kiểm chứng bởi con người. AI không tự đảm bảo sự chính xác hay tính nhất quán.</footer>
   </main></div></div>;

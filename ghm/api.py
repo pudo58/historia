@@ -23,7 +23,7 @@ from ghm.executors.base import Executor
 from ghm.executors.ssh import SSHExecutor
 from ghm.models import Host
 from ghm.recipe_runner import RecipeRunner
-from ghm import runpod
+from ghm import remote_access, runpod
 from ghm.recipes import RecipeCatalog
 from ghm.tunnel import TunnelManager
 from ghm.schemas import HostCreate, HostUpdate, HostRead, HostKeyConfirmation, RunPodAction, RunPodConnect, RunStart, HostOptions, TokenUpdate
@@ -95,22 +95,32 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
     app.include_router(studio_router(studio, studio_jobs, host_lock))
     app.state.host_service, app.state.recipe_runner, app.state.tunnel_manager = service, runner, tunnels
     origins = {config.local_origin, "http://127.0.0.1:8000", "http://localhost:8000"}
-    # Ephemeral Cloudflare quick tunnels (trycloudflare.com) used for remote UI access.
-    # Host stays loopback via cloudflared --http-host-header; only Origin is public HTTPS.
-    trycloudflare_origin_re = r"https://[a-z0-9-]+\.trycloudflare\.com"
     extra_origins = {o.strip() for o in os.environ.get("GHM_EXTRA_ORIGINS", "").split(",") if o.strip()}
     origins |= extra_origins
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"] + (["testserver"] if executor_factory else []))
-    app.add_middleware(CORSMiddleware, allow_origins=list(origins), allow_origin_regex=trycloudflare_origin_re,
+    # Only exact local origins. Remote UI (e.g. a cloudflared tunnel) is same-origin and
+    # authenticates with the access cookie below; no wildcard origin ever gets CORS.
+    app.add_middleware(CORSMiddleware, allow_origins=list(origins),
                        allow_methods=["GET","POST","PATCH","DELETE"],
                        allow_headers=["content-type", "last-event-id"])
 
+    remote_access.ensure_token(service)
+    import logging
+    logging.getLogger("uvicorn.error").info(
+        "Truy cập qua tunnel cần mã truy cập: lấy link ở trang Kết nối GPU → Truy cập từ xa.")
+
     @app.middleware("http")
     async def local_only(request, call_next):
-        import re
-        origin = request.headers.get("origin")
-        if origin and origin not in origins and not re.fullmatch(trycloudflare_origin_re, origin):
-            return JSONResponse({"detail": "Untrusted browser origin."}, status_code=403)
+        if remote_access.is_remote(request):
+            # Anything arriving through a proxy/tunnel must prove it holds the access token.
+            if remote_access.login_requested(request):
+                return remote_access.login(request, service)
+            if not remote_access.has_valid_cookie(request, service):
+                return remote_access.denied(request)
+        else:
+            origin = request.headers.get("origin")
+            if origin and origin not in origins:
+                return JSONResponse({"detail": "Untrusted browser origin."}, status_code=403)
         upload = request.url.path.startswith("/api/studio/projects/") and request.url.path.endswith("/upload")
         try:
             length = int(request.headers.get("content-length", "0"))
@@ -150,6 +160,16 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
     @app.exception_handler(httpx.HTTPError)
     async def upstream_error(request, exc):
         return JSONResponse({"detail": "Backend health check failed. Check SSH/ComfyUI and run Verify backend."}, status_code=502)
+
+    @app.get("/api/remote-access")
+    def get_remote_access(request: Request):
+        remote_access.require_local(request)
+        return {"token": service.setting(remote_access.SETTING), "query_parameter": remote_access.QUERY}
+
+    @app.post("/api/remote-access/rotate")
+    def rotate_remote_access(request: Request):
+        remote_access.require_local(request)
+        return {"token": remote_access.rotate(service), "query_parameter": remote_access.QUERY}
 
     @app.get("/api/status")
     def status():
