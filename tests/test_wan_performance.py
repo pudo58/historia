@@ -287,6 +287,8 @@ class ComfyMock:
         self.disconnect = False
         self.download_error = False
         self.forget = False
+        self.outputs = None
+        self.viewed = []
         self.busy = False
         self.schema_bad = False
         self.connections, self.closed = 0, 0
@@ -317,7 +319,7 @@ class ComfyMock:
             history = {'status': {'status_str': 'success', 'completed': True, 'messages': [
                 ['execution_start', {'prompt_id': id, 'timestamp': 1000}],
                 ['execution_success', {'prompt_id': id, 'timestamp': 61000}]]},
-                'outputs': {'1': {'videos': [{'filename': 'shot.mp4', 'subfolder': '', 'type': 'output'}]}}}
+                'outputs': self.outputs or {'1': {'videos': [{'filename': 'shot.mp4', 'subfolder': '', 'type': 'output'}]}}}
             return httpx.Response(200, json={id: history} if id in self.submitted and not self.forget else {})
         if path == '/queue':
             return httpx.Response(200, json={'queue_running': [[0, 'someone-else']] if self.busy else [], 'queue_pending': []})
@@ -337,6 +339,7 @@ class ComfyMock:
                 raise httpx.ReadError('response lost', request=request)
             return httpx.Response(200, json={'prompt_id': data['prompt_id']})
         if path == '/view':
+            self.viewed.append(dict(request.url.params))
             return httpx.Response(503 if self.download_error else 200, content=b'video')
         raise AssertionError(path)
 
@@ -701,3 +704,47 @@ def test_benchmark_comparison_requires_complete_environment_evidence(cuda):
     else:
         with pytest.raises(ValueError, match='Comfy/Torch/CUDA'):
             compare(jobs, 'baseline', 'candidate')
+
+
+def rife_mock(local, monkeypatch, *, fps):
+    mock = ComfyMock(local, monkeypatch)
+    source = mock.service.job_directory(mock.job.id) / 'source.mp4'
+    source.write_bytes(b'saved clip fixture')
+    mock.schema = {'Test': {'input': {'required': {}}, 'output': ['VIDEO']}}
+    monkeypatch.setattr('studio.backend.graph_for', lambda *args, **kwargs: {'1': {'class_type': 'Test', 'inputs': {}}})
+    monkeypatch.setattr('studio.backend.probe', lambda p: {'duration': 81 / 16, 'fps': fps})
+    # ComfyUI lists the LoadVideo *input* as a preview before the SaveVideo result.
+    mock.outputs = {'1': {'images': [{'filename': 'uploaded-source.mp4', 'subfolder': '', 'type': 'input'}], 'animated': [True]},
+                    '6': {'images': [{'filename': 'rife_00001_.mp4', 'subfolder': 'studio', 'type': 'output'}], 'animated': [True]}}
+
+    async def run():
+        job = mock.service.require(Job, mock.job.id)
+        return await mock.backend.generate(job, 'rife_post', '', [source], 0, 'draft', lambda message: None,
+            lambda stage, value: mock.jobs.checkpoint(job.id, stage, value), 'rife-0')
+    return mock, run
+
+
+@pytest.mark.asyncio
+async def test_rife_downloads_the_saved_result_not_the_loaded_input(local, monkeypatch):
+    mock, run = rife_mock(local, monkeypatch, fps=48)
+    await run()
+    assert mock.viewed == [{'filename': 'rife_00001_.mp4', 'subfolder': 'studio', 'type': 'output'}]
+    record = mock.service.require(Job, mock.job.id).result['submissions']['rife-0']
+    assert record['output']['type'] == 'output' and record['state'] == 'downloaded'
+
+
+@pytest.mark.asyncio
+async def test_rife_result_that_is_not_interpolated_is_rejected(local, monkeypatch):
+    mock, run = rife_mock(local, monkeypatch, fps=16)
+    with pytest.raises(ValueError, match='48 fps'):
+        await run()
+    assert mock.service.require(Job, mock.job.id).result['submissions']['rife-0']['state'] != 'downloaded'
+
+
+@pytest.mark.asyncio
+async def test_only_input_previews_means_no_output(local, monkeypatch):
+    mock, run = rife_mock(local, monkeypatch, fps=48)
+    mock.outputs = {'1': {'images': [{'filename': 'uploaded-source.mp4', 'subfolder': '', 'type': 'input'}]}}
+    with pytest.raises(ValueError, match='output đúng loại'):
+        await run()
+    assert mock.viewed == []

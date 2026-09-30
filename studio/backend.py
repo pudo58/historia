@@ -14,6 +14,8 @@ from ghm.executors.http import comfy_client
 from studio.media import probe
 from studio.packs import graph_for
 
+RIFE_OUTPUT_FPS = 48   # rife_post.json: 16 fps Wan clip x multiplier 3
+
 
 def worker_failure(result):
     """Allowlisted diagnostics only: never return tracebacks, signed URLs or tokens."""
@@ -300,7 +302,10 @@ print(json.dumps(data))
                 for key in ["images", "gifs", "videos"]:
                     outputs.extend(output.get(key, []))
             suffixes = {".mp4", ".webm"} if is_video else {".png", ".jpg", ".webp"}
-            output = next((o for o in outputs if Path(o.get("filename", "")).suffix.lower() in suffixes), None)
+            # Only files a Save node wrote. Some nodes (LoadVideo) also list the *input* they read as a
+            # preview; downloading that would hand back the untouched source as if it were the result.
+            output = next((o for o in outputs if o.get("type", "output") == "output"
+                           and Path(o.get("filename", "")).suffix.lower() in suffixes), None)
             if not output:
                 raise ValueError("Workflow không tạo output đúng loại; không đánh dấu thành công.")
             filename = output["filename"]
@@ -340,6 +345,8 @@ print(json.dumps(data))
                     measured_fps = video_info.get('fps')
                     if measured_fps and abs(measured_fps - config['fps']) > .5:
                         raise ValueError('FPS clip Wan không khớp cấu hình shot; không lưu artifact sai.')
+                if name == 'rife_post' and video_info.get('fps') and abs(video_info['fps'] - RIFE_OUTPUT_FPS) > .5:
+                    raise ValueError('Clip RIFE không phải 48 fps: nội suy chưa được áp dụng; không lưu clip gốc như kết quả nội suy.')
             else:
                 from PIL import Image
                 with Image.open(target) as image:

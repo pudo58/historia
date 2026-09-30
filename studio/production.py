@@ -27,7 +27,9 @@ def dependency_identity(project, scene, kind):
         return {'narration': scene['narration'], 'voice': project['voice'],
                 'pronunciation': project.get('pronunciation', '')}
     if kind == 'rife':
-        return {'profile': project.get('frame_interpolation'), 'clip_ids': scene.get('clip_ids')}
+        # output_selection: earlier RIFE jobs saved the untouched source clip (LoadVideo preview) instead of
+        # the interpolated file, so their results must not be reused.
+        return {'profile': project.get('frame_interpolation'), 'clip_ids': scene.get('clip_ids'), 'output_selection': 2}
     if kind in {'keyframe', 'clip'}:
         character_ids = scene.get('character_ids', [])
         characters = [c for c in project['characters'] if c['id'] in character_ids]
