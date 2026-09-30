@@ -263,3 +263,91 @@ def test_settings_validation():
         ProjectInput(title='t', topic='t', upscale_method='ai')
     for ratio in ('16:9', '9:16', '1:1', '4:5'):
         assert ProjectInput(title='t', topic='t', aspect_ratio=ratio).aspect_ratio == ratio
+
+
+def complete_shots(service, jobs, run_id, count):
+    """Complete the current keyframe job with one image per shot (per_shot strategy)."""
+    run = service.require(ProductionRun, run_id)
+    job = service.require(Job, run.checkpoint['current_job_id'])
+    assert job.kind == 'keyframe'
+    ids = []
+    for index in range(count):
+        path = service.job_directory(job.id) / f'keyframe-{index}.png'
+        path.write_bytes(f'shot {index}'.encode())
+        ids.append(service.artifact(path, run.project_id, path.name, job.id)['id'])
+    jobs.scene_result(job.scene_id, job=job, keyframe_id=ids[0], keyframe_approved=False,
+                      shot_keyframes=ids, shot_keyframes_approved=False)
+    jobs.patch(job.id, status='completed')
+    return job
+
+
+def test_keyframe_review_does_not_idle_gpu_between_scenes(setup, monkeypatch):
+    from studio.media import shot_count
+    client, service, jobs, project, first, request = setup
+    # Three scenes x 20 s of narration = the 60 s target, so no duration review.
+    monkeypatch.setattr('studio.media.probe', lambda path: {'duration': 20})
+    monkeypatch.setattr('studio.production.probe', lambda path: {'duration': 20})
+    second = service.add_scene(project['id'], SceneInput(title='Two', narration='More', visual_prompt='A river',
+                                                         image_strategy='per_shot'))
+    third = service.add_scene(project['id'], SceneInput(title='Three', narration='End', visual_prompt='A gate'))
+    live = service.project(project['id'])['scenes'][0]
+    value = {k: live[k] for k in SceneInput.model_fields}
+    first = service.update_scene(first['id'], SceneUpdate(**{**value, 'image_strategy': 'per_shot'},
+                                                          revision=live['revision']))
+    scenes = [first, second, third]
+    run = jobs.runs.create(project['id'], request.model_copy(update={
+        'scene_revisions': {s['id']: s['revision'] for s in scenes}}))
+    for _ in scenes:
+        jobs.runs.tick()
+        complete(service, jobs, run['id'], 'speech')
+    shots = shot_count(20)
+    jobs.runs.tick()
+    complete_shots(service, jobs, run['id'], shots)
+    jobs.runs.tick()
+    state = jobs.runs.get(run['id'])
+    # Scene one waits for review, but scene two's keyframes are already being generated.
+    assert state['status'] == 'running'
+    assert state['checkpoint']['review_pending'] == [first['id']]
+    assert service.require(Job, state['checkpoint']['current_job_id']).scene_id == second['id']
+    # Early approval while the GPU keeps working.
+    url = f"/api/studio/production-runs/{run['id']}/approve-keyframes"
+    assert client.post(url, json={'scene_ids': [first['id']]}).status_code == 200
+    assert jobs.runs.get(run['id'])['status'] == 'running'
+    complete_shots(service, jobs, run['id'], shots)
+    jobs.runs.tick()
+    complete(service, jobs, run['id'], 'keyframe')  # shared image: no shot review
+    jobs.runs.tick()
+    state = jobs.runs.get(run['id'])
+    assert state['status'] == 'keyframe_review'
+    assert state['checkpoint']['review_pending'] == [second['id']]
+    assert state['checkpoint']['review_scene_id'] == second['id']
+    assert not [j for j in jobs.list(project['id']) if j['kind'] == 'clip']
+    with pytest.raises(ValueError):
+        jobs.runs.action(run['id'], 'resume')
+    assert client.post(url, json={'scene_ids': [third['id']]}).status_code in {400, 409, 422}
+    assert client.post(url, json={'scene_ids': []}).status_code == 422
+    assert client.post(url, json={'scene_id': second['id']}).status_code == 200
+    state = jobs.runs.get(run['id'])
+    assert state['status'] == 'running' and state['checkpoint']['review_pending'] == []
+    assert 'review_scene_id' not in state['checkpoint']
+    jobs.runs.tick()
+    assert service.require(Job, jobs.runs.get(run['id'])['checkpoint']['current_job_id']).kind == 'clip'
+
+
+def test_batch_keyframe_approval_is_all_or_nothing(setup, monkeypatch):
+    from studio.production import review_waiting
+    client, service, jobs, project, scene, request = setup
+    assert review_waiting({'review_scene_id': 'old', 'media': {}}) == ['old']
+    assert review_waiting({'review_pending': ['a', 'b'], 'media': {'a': {'shot_keyframes_approved': True}}}) == ['b']
+    run = jobs.runs.create(project['id'], request)
+    with service.sessions() as session:
+        row = session.get(ProductionRun, run['id'])
+        row.status = 'keyframe_review'
+        row.checkpoint = {**row.checkpoint, 'review_pending': [scene['id']], 'review_scene_id': scene['id'],
+                          'media': {scene['id']: {'shot_keyframes': ['missing-artifact']}}}
+        session.commit()
+    url = f"/api/studio/production-runs/{run['id']}/approve-keyframes"
+    assert client.post(url, json={'scene_ids': [scene['id']]}).status_code != 200
+    saved = jobs.runs.get(run['id'])
+    assert saved['status'] == 'keyframe_review'
+    assert not saved['checkpoint']['media'][scene['id']].get('shot_keyframes_approved')

@@ -33,9 +33,29 @@ Dependency local khai báo trong `pyproject.toml`; không cần cài model AI l�
 - Kịch bản AI dài cần chia theo chương thay vì một lượt sinh; chưa có kiểm thử 10–20 phút và dự toán từ benchmark.
 - Chưa mở ghép nhạc, phụ đề theo cụm ngắn, batch render, chỉnh sửa/xóa/reorder toàn bộ loại tài nguyên, nhiều trích dẫn trong form, hay phân tích ảnh tham khảo tự động.
 - Bản nháp hiện cấu hình 832×480; bản chính 1280×720. Không tự giảm chất lượng do thiếu VRAM.
-- Giao diện GPU legacy vẫn có nhãn tiếng Anh và cần thay bằng wizard tiếng Việt.
+- Giao diện GPU legacy đã Việt hóa nhãn và các lỗi backend thường gặp; lỗi tiếng Anh hiếm gặp vẫn hiện nguyên văn trong phần thông tin kỹ thuật. Chưa gộp thành wizard một luồng.
 
 ## Kiểm thử
+
+### Duyệt ảnh theo lô, tiến độ theo cảnh, tách main.tsx (29/09/2026)
+
+- Backend: cảnh ảnh riêng từng shot/shot list sinh xong keyframe không còn dừng cả lượt. Cảnh được đưa vào hàng chờ `review_pending`; GPU tiếp tục sinh keyframe các cảnh còn lại. Chỉ khi hết keyframe mà còn cảnh chưa duyệt thì lượt chuyển `keyframe_review` và Wan chưa chạy. Checkpoint cũ chỉ có `review_scene_id` vẫn đọc được.
+- `POST /api/studio/production-runs/{id}/approve-keyframes` nhận `{"scene_ids":[...]}` (vẫn nhận `scene_id` cũ), duyệt được sớm khi lượt đang chạy/tạm dừng; duyệt nhiều cảnh là tất cả hoặc không, vẫn kiểm tra đủ ảnh và checksum. Kiểm ảnh Qwen3-VL vẫn chỉ mở khi lượt ở `keyframe_review`.
+- Video: khung duyệt ảnh cho mọi cảnh đang chờ (ảnh lớn, dải shot, lời dẫn, phím J/K đổi cảnh, ←/→ đổi ảnh, A duyệt). "Duyệt N cảnh đã xem" chỉ gồm cảnh đã mở trong phiên. Phím tắt bỏ qua khi đang gõ trong ô nhập hoặc có hộp thoại.
+- Dòng "việc tiếp theo" thay dòng trạng thái cũ; bảng "Tiến độ theo cảnh" (Giọng đọc → Ảnh → Duyệt ảnh → Clip → RIFE, ghép phim) nằm dưới trình phát.
+- `main.tsx` 64 KB tách thành `App`, `ProjectView`, `LegacyProjectView`, `ProjectForm`, `ProjectLibrary`, `Sources`, `SceneEditor`, `api.ts`, `ui.tsx`; không đổi hành vi.
+- Việt hóa: `messages.ts` dịch các lỗi tiếng Anh thường gặp từ backend GPU/bộ cài (fingerprint, preflight, tunnel, smoke test, tải model); phương thức xác thực và nhãn topbar đã Việt hóa. Lỗi chưa có trong bảng vẫn hiện nguyên văn trong "Thông tin kỹ thuật gốc".
+- Kiểm thử: backend 298 test pass (thêm test không để GPU rảnh khi chờ duyệt và duyệt lô tất cả-hoặc-không). Frontend build/TypeScript/ESLint pass. Playwright 28 test: 26 pass trên Chromium không có H.264; 2 test phát video MP4 cần trình duyệt có H.264 và pass khi thay video mẫu bằng WebM trong lần chạy kiểm tra. Chưa thử với lượt sản xuất thật trên GPU.
+
+### Tăng tốc bộ cài trên Pod mới (29/09/2026)
+
+- Số đo trước khi sửa (job `b70e87e1`, 28/09): tổng 20,7 phút; tải 11 model tuần tự chiếm 13,5 phút (~125 MB/s, một kết nối), ba venv PyTorch ~4–5 phút chạy sau khi tải xong.
+- Tải model theo lô trong một lệnh remote: tối đa 4 file cùng lúc (file lớn trước), SHA256/git-sha1 tính ngay khi tải nên không đọc lại file sau khi xong; file `.part` vẫn resume bằng Range, file sai checksum vẫn bị cách ly, file có sẵn sai checksum vẫn không bị ghi đè. Kiểm tra chỗ trống cho toàn bộ phần còn thiếu trước khi tải.
+- File model LLM/TTS (Qwen3-VL, VieNeu, codec) tải chung lô này qua URL revision cố định; bước kiểm tra snapshot dịch vụ cũ vẫn chạy nhưng chỉ còn xác minh.
+- ComfyUI được checkout trước, sau đó tải model song song với cài PyTorch/requirements và venv LLM/TTS. Tải model dùng khóa flock riêng (`-models.lock`) nên không chặn pip; downloader cũ còn chạy vẫn chặn downloader mới. Lỗi ở một nhánh hủy nhánh còn lại, file `.part` giữ lại để resume.
+- Chỉ chạy song song khi thăm dò thấy hai lệnh SSH thực sự chạy cùng lúc (hai lệnh `sleep 2` xong trong dưới 3,5 giây). Gateway Basic SSH từ chối hoặc xếp hàng kênh thì tự quay về thứ tự tải xong rồi cài. **Chưa thử trên Runpod Basic SSH thật** nên chưa biết gateway có cho hai kênh đồng thời không.
+- Sửa lỗi: tiến độ tải trước đây không vào log vì `InstallExecutor.run_input` bỏ `on_output`. Nay log hiện "Đã tải X / Y GiB model" và từng file đã kiểm tra checksum.
+- Kiểm thử local: chạy script tải thật với server HTTP hỗ trợ Range (song song, resume, server bỏ qua Range, sai checksum, file có sẵn sai checksum, đích ngoài thư mục cho phép, thiếu chỗ trống); orchestration install song song/tuần tự/hủy khi lỗi. Toàn bộ 296 test pass, Ruff pass. Thử nghiệm giới hạn 25 MB/s mỗi kết nối: 4 luồng nhanh gấp ~2,7 lần 1 luồng. Chưa đo trên Pod thật; mức giảm thực phụ thuộc mạng của máy chủ.
 
 ### Chất lượng và chi phí render (28/09/2026)
 

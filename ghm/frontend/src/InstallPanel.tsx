@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { viMessage } from './messages';
 import HuggingFaceToken from './HuggingFaceToken';
 import RuntimePanel from './RuntimePanel';
 import { JobEvents } from './StudioControls';
@@ -20,13 +21,8 @@ function StatusChip({status}:{status:string}){
   const tone=statusTone(status);
   return <span className={`status-chip ${tone}`} title={status}><span aria-hidden="true">{tone==='status-completed'?'✓':tone==='status-failed'?'×':'·'}</span>{names[status] || status}</span>;
 }
-const knownErrors:Record<string,string>={
-  'Request failed':'Yêu cầu không thành công.',
-  'Could not reach this host to inspect its SSH key.':'Không thể kết nối máy để đọc khóa SSH.',
-  'Health and an actual workflow smoke test must pass before ready.':'Cần vượt qua kiểm tra sức khỏe và chạy thử quy trình thực tế trước khi máy sẵn sàng.',
-};
 function ErrorDetail({message}:{message:string}){
-  const friendly=knownErrors[message] || (/[À-ỹ]/.test(message) ? message : null);
+  const friendly=viMessage(message);
   return <div role="alert" className="alert error"><div>{friendly || 'Không thể hoàn tất thao tác. Xem thông tin kỹ thuật để biết nguyên nhân.'}{friendly !== message && <details><summary>Thông tin kỹ thuật gốc</summary><span className="break-all">{message}</span></details>}</div></div>;
 }
 async function call<T>(path:string,body?:unknown,method=body===undefined?'GET':'POST'):Promise<T>{

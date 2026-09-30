@@ -3,6 +3,7 @@ import { demoVideo } from './demo-video';
 
 async function fixture(page:Page, status='running') {
   const mutations:string[]=[];
+  const bodies:{path:string;body:unknown}[]=[];
   const errors:string[]=[];
   page.on('pageerror',error=>errors.push(error.message));
   const config={width:1280,height:720,frames:81,fps:16,steps:4,shot_seconds:5.0625};
@@ -14,7 +15,17 @@ async function fixture(page:Page, status='running') {
   let failLogs=false;
   await page.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
-    if(request.method()!=='GET'){mutations.push(path);if(path.endsWith('/pause'))run.status='paused';return route.fulfill({json:{}});}
+    if(request.method()!=='GET'){
+      mutations.push(path);bodies.push({path,body:request.postDataJSON?.()??null});
+      if(path.endsWith('/pause'))run.status='paused';
+      if(path.endsWith('/approve-keyframes')){
+        const ids:string[]=request.postDataJSON().scene_ids;
+        const cp=run.checkpoint as {review_pending?:string[];media:Record<string,Record<string,unknown>>};
+        cp.review_pending=(cp.review_pending||[]).filter(id=>!ids.includes(id));
+        for(const id of ids)cp.media[id]={...cp.media[id],shot_keyframes_approved:true};
+      }
+      return route.fulfill({json:{}});
+    }
     if(path.includes('/events')||path.includes('/journal')) {
       if(failLogs)return route.fulfill({status:503,json:{detail:'Disconnected'}});
       let rows=entries.filter(e=>(!url.searchParams.get('job_id')||e.job_id===url.searchParams.get('job_id'))&&(!url.searchParams.get('q')||e.message.includes(url.searchParams.get('q')!))&&(!url.searchParams.get('level')||url.searchParams.get('level')!.split(',').includes(e.level)));
@@ -38,7 +49,7 @@ async function fixture(page:Page, status='running') {
     if(path.endsWith('/artifacts'))return route.fulfill({json:[]});
     return route.fulfill({json:[]});
   });
-  return {mutations,errors,entries,project,jobs,disconnect:()=>{failLogs=true;}};
+  return {mutations,bodies,run,errors,entries,project,jobs,disconnect:()=>{failLogs=true;}};
 }
 
 for(const width of [375,1366])test(`storyboard screenshot ${width}`,async({page},testInfo)=>{
@@ -266,4 +277,109 @@ for(const status of ['pause_requested','paused','reconciling','failed','complete
   await page.getByRole('tab',{name:'Nhật ký',exact:true}).click();
   await expect(page.locator('.journal-viewport')).toBeVisible();
   expect(state.mutations).toEqual([]);expect(state.errors).toEqual([]);
+});
+
+async function reviewFixture(page:Page) {
+  const state=await fixture(page,'running');
+  const cp=state.run.checkpoint as {review_pending?:string[];media:Record<string,Record<string,unknown>>};
+  cp.review_pending=['s6','s7'];
+  // Wan clips are not dispatched while keyframes wait for review.
+  const jobsMap=(state.run.checkpoint as {jobs:Record<string,string>}).jobs;
+  delete jobsMap['clip:s6'];delete jobsMap['clip:s7'];
+  for(const id of ['s6','s7'])cp.media[id]={shot_keyframes:[`k${id}-0`,`k${id}-1`,`k${id}-2`],shot_keyframes_approved:false,speech_id:`v${id}`};
+  for(const scene of state.run.snapshot.scenes as {id:string;image_strategy?:string}[])if(['s6','s7'].includes(scene.id))scene.image_strategy='per_shot';
+  return state;
+}
+
+test('batch keyframe review: GPU keeps working, keyboard approval, typing is ignored',async({page},testInfo)=>{
+  const state=await reviewFixture(page);
+  await page.goto('/?page=projects&project=p&tab=video');
+  const review=page.getByRole('region',{name:'Duyệt ảnh keyframe'});
+  await expect(review.getByRole('heading',{name:'2 cảnh chờ duyệt ảnh'})).toBeVisible();
+  await expect(page.locator('.render-now')).toContainText('Trong lúc chờ, bạn có thể duyệt ảnh 2 cảnh');
+  await expect(review.getByText(/GPU vẫn đang tạo ảnh/)).toBeVisible();
+  const scenes=review.getByRole('navigation',{name:'Cảnh chờ duyệt'});
+  await expect(scenes.locator('[aria-current]')).toContainText('Cảnh 7');
+  await page.keyboard.press('j');
+  await expect(scenes.locator('[aria-current]')).toContainText('Cảnh 8');
+  await review.getByRole('button',{name:'Shot 2'}).click();
+  await expect(review.getByText('Shot 2/3')).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(review.getByText('Shot 3/3')).toBeVisible();
+  await page.keyboard.press('k');
+  await expect(scenes.locator('[aria-current]')).toContainText('Cảnh 7');
+  await page.getByLabel('Tìm cảnh').fill('a');
+  expect(state.bodies).toEqual([]);
+  await page.getByLabel('Tìm cảnh').fill('');
+  await review.locator('h3').click();
+  await page.keyboard.press('a');
+  await expect.poll(()=>state.bodies).toEqual([{path:'/api/studio/production-runs/r/approve-keyframes',body:{scene_ids:['s6']}}]);
+  await expect(review.getByRole('heading',{name:'1 cảnh chờ duyệt ảnh'})).toBeVisible();
+  await expect(review.getByRole('button',{name:'Duyệt 1 cảnh đã xem'})).toBeEnabled();
+  await page.screenshot({path:testInfo.outputPath('keyframe-review-1366.png'),fullPage:true});
+  expect(state.errors).toEqual([]);
+});
+
+for(const width of [375,1366])test(`scene progress board and review fit ${width}px`,async({page},testInfo)=>{
+  const state=await reviewFixture(page);
+  await page.setViewportSize({width,height:900});
+  await page.goto('/?page=projects&project=p&tab=video');
+  const board=page.locator('.scene-progress');
+  await expect(board.locator('tbody tr')).toHaveCount(14);
+  await expect(board.locator('summary')).toContainText('5/14');
+  await expect(board.locator('tbody tr').nth(0)).toContainText('Xong');
+  await expect(board.locator('tbody tr').nth(5)).toContainText('Đang chạy');
+  await expect(board.locator('tbody tr').nth(6)).toContainText('Chờ bạn duyệt');
+  await expect(board.locator('tbody tr').nth(2)).toContainText('Không cần');
+  await board.getByRole('button',{name:'Xem clip cảnh số 2'}).click();
+  await expect(page).toHaveURL(/scene=s1/);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+  await page.screenshot({path:testInfo.outputPath(`progress-${width}.png`),fullPage:true});
+  expect(state.mutations).toEqual([]);expect(state.errors).toEqual([]);
+});
+
+test('waiting for review after all keyframes names the next action',async({page})=>{
+  const state=await reviewFixture(page);
+  state.run.status='keyframe_review';
+  await page.goto('/?page=projects&project=p&tab=video');
+  await expect(page.locator('.render-now')).toContainText('Việc của bạn: duyệt ảnh 2 cảnh');
+  await expect(page.getByRole('button',{name:/Nhờ Qwen3-VL/})).toBeVisible();
+  await page.getByRole('button',{name:'Đến phần duyệt ảnh ↓'}).click();
+  await expect(page.getByRole('region',{name:'Duyệt ảnh keyframe'})).toBeInViewport();
+  expect(state.mutations).toEqual([]);expect(state.errors).toEqual([]);
+});
+
+test('GPU page shows Vietnamese labels and translated backend errors',async({page},testInfo)=>{
+  const state=await fixture(page);
+  await page.route('**/api/hosts/h/preflight',route=>route.fulfill({status:404,json:{detail:'Chưa có kết quả kiểm tra máy.'}}));
+  await page.route('**/api/runpod/pods',route=>route.fulfill({json:{configured:false,pods:[]}}));
+  await page.route('**/api/hosts',route=>route.fulfill({json:[{id:'h',label:'A100 · Demo',address:'gpu.example.test',port:22,username:'root',auth_kind:'password',state:'needs_setup'}]}));
+  await page.route('**/api/hosts/h/inspect-key',route=>route.fulfill({status:502,json:{detail:'Could not reach this host to inspect its SSH key.'}}));
+  await page.goto('/?page=gpu');
+  await expect(page.getByText('CHỈ CHẠY TRÊN MÁY NÀY')).toBeVisible();
+  const read=page.getByRole('button',{name:'Đọc fingerprint SSH'}).first();
+  if(await read.count()){await read.click();await expect(page.getByText('Không kết nối được máy để đọc khóa SSH.')).toBeVisible();}
+  const text=await page.locator('body').innerText();
+  for(const english of ['Request failed','LOCAL ONLY','Could not reach','password','needs_setup'])expect(text).not.toContain(english);
+  await page.screenshot({path:testInfo.outputPath('gpu-1366.png'),fullPage:true});
+  expect(state.errors).toEqual([]);
+});
+
+test('saved Hugging Face token is shown once and not asked again',async({page})=>{
+  const state=await fixture(page);
+  let configured=true;
+  await page.route('**/api/hosts',route=>route.fulfill({json:[]}));
+  await page.route('**/api/settings',route=>route.fulfill({json:{hf_token_configured:configured,hf_token_hint:configured?'hf_…G7h8':null}}));
+  await page.route('**/api/settings/hf-token',route=>{configured=!!route.request().postDataJSON().token;return route.fulfill({json:{hf_token_configured:configured}});});
+  await page.goto('/?page=packs');
+  await expect(page.getByText('✓ Đã lưu token hf_…G7h8')).toBeVisible();
+  await expect(page.getByLabel('Hugging Face token')).toHaveCount(0);
+  await page.getByRole('button',{name:'Thay token khác'}).click();
+  await expect(page.getByLabel('Hugging Face token')).toBeVisible();
+  await page.getByRole('button',{name:'Hủy, giữ token cũ'}).click();
+  await page.getByRole('button',{name:'Xóa token'}).click();
+  await page.getByRole('button',{name:'Xác nhận xóa token'}).click();
+  await expect(page.getByText('Đã xóa token khỏi máy này.')).toBeVisible();
+  await expect(page.getByLabel('Hugging Face token')).toBeVisible();
+  expect(state.errors).toEqual([]);
 });

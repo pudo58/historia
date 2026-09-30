@@ -4,13 +4,14 @@ import hashlib
 import json
 import re
 import shlex
+import time
 
 import httpx
 
 from ghm.comfy import check_backend
 from ghm.executors.http import comfy_client
 from ghm.manifests import ModelAsset
-from ghm.model_download import download
+from ghm.model_download import DEFAULT_WORKERS, download_many, model_item, snapshot_items
 from ghm.remote_service import manage
 from ghm.schemas import HostOptions
 from studio.install_checks import inventory, summarize
@@ -93,10 +94,12 @@ class InstallExecutor:
     Disconnect does not authorize a second installer while an old child still runs.
     Raw pip/HF output is not persisted: it may contain signed download URLs/tokens.
     """
-    def __init__(self, executor, root):
+    def __init__(self, executor, root, scope=None):
         self.executor = executor
         key = hashlib.sha256(root.encode()).hexdigest()[:24]
-        self.lock_path = '/tmp/historia-install-' + key + '.lock'
+        # Model downloads use their own lock so they can overlap dependency installs,
+        # while an orphaned downloader still blocks a second downloader.
+        self.lock_path = '/tmp/historia-install-' + key + ('-' + scope if scope else '') + '.lock'
 
     async def run(self, command, timeout=None, on_output=None, input_data=None):
         value = 'flock -n -E 73 ' + shlex.quote(self.lock_path) + ' sh -c ' + shlex.quote(command)
@@ -107,10 +110,17 @@ class InstallExecutor:
             pending += text
             while '\n' in pending:
                 line, pending = pending.split('\n', 1)
-                match = re.fullmatch(r'Downloaded bytes: (\d{1,16})', line.strip())
+                line = line.strip()
+                match = re.fullmatch(r'Downloaded bytes: (\d{1,16})(?: of (\d{1,16}))?', line)
                 if match and int(match[1]) - last_bytes >= 256*1024**2:
                     last_bytes = int(match[1])
-                    on_output('stdout', f'Đã tải {last_bytes/1024**3:.2f} GiB của model hiện tại.')
+                    if match[2] and int(match[2]):
+                        on_output('stdout', f'Đã tải {last_bytes/1024**3:.2f} / {int(match[2])/1024**3:.2f} GiB model.')
+                    else:
+                        on_output('stdout', f'Đã tải {last_bytes/1024**3:.2f} GiB của model hiện tại.')
+                ready = re.fullmatch(r'Model ready: ([\w.@/+-]{1,200})', line)
+                if ready:
+                    on_output('stdout', 'Đã kiểm tra checksum: ' + ready[1])
             pending = pending[-4096:]
         callback = safe_progress if on_output else None
         if input_data is None:
@@ -122,10 +132,41 @@ class InstallExecutor:
         return result
 
     async def run_input(self, command, data, timeout=60, on_output=None):
-        return await self.run(command, timeout, input_data=data)
+        return await self.run(command, timeout, on_output=on_output, input_data=data)
 
     def __getattr__(self, name):
         return getattr(self.executor, name)
+
+
+PARALLEL_PROBE = 'sleep 2; echo historia-channel-ok'
+
+
+async def parallel_channels(executor) -> bool:
+    """True only if two remote commands really run at the same time on this connection.
+
+    Full SSH multiplexes channels; a terminal-only gateway may refuse or serialize them.
+    Read-only probe; any doubt falls back to the sequential order.
+    """
+    started = time.monotonic()
+    try:
+        results = await asyncio.wait_for(asyncio.gather(
+            executor.run(PARALLEL_PROBE, 20), executor.run(PARALLEL_PROBE, 20)), 30)
+    except Exception:  # noqa: BLE001 -- probe failure only disables the optimisation
+        return False
+    return (all(r.rc == 0 and 'historia-channel-ok' in r.stdout for r in results)
+            and time.monotonic() - started < 3.5)
+
+
+async def run_together(*steps):
+    """Run steps concurrently; the first failure cancels the others (partial files stay resumable)."""
+    tasks = [asyncio.ensure_future(step) for step in steps]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def install(hosts, job, lock: dict, log) -> dict:
@@ -142,7 +183,9 @@ async def install(hosts, job, lock: dict, log) -> dict:
     log('Đang kiểm tra quyền tải từng file model trên Hugging Face; chưa tải hoặc cài dependency.')
     await asyncio.to_thread(check_model_access, lock, hosts.setting('hf_token'))
     log('Đã xác minh quyền tải toàn bộ file model của bộ cài.')
-    executor = InstallExecutor(hosts.executor_for(host), options.root)
+    base = hosts.executor_for(host)
+    executor = InstallExecutor(base, options.root)
+    model_executor = InstallExecutor(base, options.root, scope='models')
     root, comfy = options.root, options.comfy_root
     q = shlex.quote
     python = root + "/venv/bin/python"
@@ -203,47 +246,73 @@ async def install(hosts, job, lock: dict, log) -> dict:
                           "if [ \"$(id -u)\" = 0 ]; then apt-get update && env DEBIAN_FRONTEND=noninteractive apt-get install -y git ffmpeg espeak-ng python3-venv build-essential; "
                           "else sudo -n apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y git ffmpeg espeak-ng python3-venv build-essential; fi; "
                           "else echo 'Install git ffmpeg espeak-ng Python3.11+ venv build tools manually for this distribution'; exit 40; fi")
+        base_pending = False
         if not options.adopt_existing:
             check = await executor.run(f"test -x {q(python)} && test -f {q(root + '/.studio-base-' + COMFY_COMMIT)} && test \"$(git -C {q(comfy)} rev-parse HEAD)\" = {COMFY_COMMIT}", 30)
             if check.rc:
                 if running:
                     raise ValueError("ComfyUI đang chạy nhưng chưa đúng bộ môi trường. Dùng Adopt hoặc chọn root riêng; không tự dừng dịch vụ.")
                 log("Cài ComfyUI và PyTorch trong virtualenv riêng.")
-                await create_environment(root + '/venv')
-                wheel_index = "cu130" if driver >= 580 else "cu128"
-                await command(f"{private_python(python)} -m pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/{wheel_index}")
+                # Checkout first: it needs an empty directory and creates models/,
+                # so model downloads can start while PyTorch/requirements install.
                 await command(f"if [ -d {q(comfy + '/.git')} ]; then test -z \"$(git -C {q(comfy)} status --porcelain)\" && test \"$(git -C {q(comfy)} remote get-url origin)\" = https://github.com/Comfy-Org/ComfyUI.git; "
                               f"else mkdir -p {q(comfy)} && test -z \"$(ls -A {q(comfy)})\" && git -C {q(comfy)} init && git -C {q(comfy)} remote add origin https://github.com/Comfy-Org/ComfyUI.git; fi && "
                               f"git -C {q(comfy)} fetch --depth 1 origin {COMFY_COMMIT} && git -C {q(comfy)} checkout --detach {COMFY_COMMIT}")
-                await command(f"{private_python(python)} -m pip install -r {q(comfy + '/requirements.txt')} && {private_python(python)} -m pip check && "
-                              f"{q(python)} -c 'import torch; assert torch.cuda.is_available(); (torch.ones(1,device=\"cuda\")+1).cpu()' && touch {q(root + '/.studio-base-' + COMFY_COMMIT)}")
+                base_pending = True
         else:
             await command("test -f " + q(comfy + "/main.py"), 30)
             log("Adopt: giữ nguyên ComfyUI và dependency hiện có; chỉ bổ sung model còn thiếu và môi trường dịch vụ riêng.")
-        for index, item in enumerate(lock["models"]):
-            asset = ModelAsset.model_validate(item)
-            log(f"Model {index+1}/{len(lock['models'])}: {asset.name}")
-            await download(executor, asset, comfy, hosts.setting("hf_token"), 14400,
-                           on_output=lambda channel, line: log(line))
-        for environment, packages in lock['environments'].items():
-            env_hash = hashlib.sha256(packages.encode()).hexdigest()[:16]
-            marker = root + "/" + environment + "-venv/.studio-installed-" + env_hash
-            exists = await executor.run("test -f " + q(marker), 15)
-            if exists.rc:
-                log("Cài môi trường riêng: " + environment)
-                py = root + "/" + environment + "-venv/bin/python"
-                directory = root + '/' + environment + '-venv'
-                await create_environment(directory)
-                log(environment + ': cài PyTorch CUDA trong venv riêng, bỏ constraint kế thừa từ template cho lệnh này.')
-                await command(f"{private_python(py)} -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128", stage=environment + ' / PyTorch')
-                log(environment + ': cài thư viện ứng dụng và kiểm tra dependency.')
-                await command(f"{private_python(py)} -m pip install {packages} --index-url https://pypi.org/simple && {private_python(py)} -m pip check && {private_python(py)} -m pip freeze > {q(root + '/' + environment + '-resolved.txt')} && touch {q(marker)}", stage=environment + ' / thư viện ứng dụng')
+
+        async def install_dependencies():
+            if base_pending:
+                await create_environment(root + '/venv')
+                wheel_index = "cu130" if driver >= 580 else "cu128"
+                await command(f"{private_python(python)} -m pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/{wheel_index}")
+                await command(f"{private_python(python)} -m pip install -r {q(comfy + '/requirements.txt')} && {private_python(python)} -m pip check && "
+                              f"{q(python)} -c 'import torch; assert torch.cuda.is_available(); (torch.ones(1,device=\"cuda\")+1).cpu()' && touch {q(root + '/.studio-base-' + COMFY_COMMIT)}")
+            for environment, packages in lock['environments'].items():
+                env_hash = hashlib.sha256(packages.encode()).hexdigest()[:16]
+                marker = root + "/" + environment + "-venv/.studio-installed-" + env_hash
+                exists = await executor.run("test -f " + q(marker), 15)
+                if exists.rc:
+                    log("Cài môi trường riêng: " + environment)
+                    py = root + "/" + environment + "-venv/bin/python"
+                    directory = root + '/' + environment + '-venv'
+                    await create_environment(directory)
+                    log(environment + ': cài PyTorch CUDA trong venv riêng, bỏ constraint kế thừa từ template cho lệnh này.')
+                    await command(f"{private_python(py)} -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128", stage=environment + ' / PyTorch')
+                    log(environment + ': cài thư viện ứng dụng và kiểm tra dependency.')
+                    await command(f"{private_python(py)} -m pip install {packages} --index-url https://pypi.org/simple && {private_python(py)} -m pip check && {private_python(py)} -m pip freeze > {q(root + '/' + environment + '-resolved.txt')} && touch {q(marker)}", stage=environment + ' / thư viện ứng dụng')
+
+        token = hosts.setting('hf_token')
+        assets = [ModelAsset.model_validate(item) for item in lock['models']]
+        for asset in assets:
+            if asset.gated and not token:
+                raise ValueError(f"{asset.name}: add a read-only Hugging Face token in Settings.")
+        items = [model_item(asset, comfy) for asset in assets] + snapshot_items(lock.get('snapshots', []), root)
+
+        async def download_models():
+            total = sum(item['size_bytes'] or 0 for item in items) / 1024**3
+            log(f'Tải {len(items)} file model ({total:.1f} GiB), tối đa {DEFAULT_WORKERS} file cùng lúc; '
+                'SHA256 kiểm tra ngay khi tải, file hợp lệ được giữ.')
+            await download_many(model_executor, items, [comfy + '/models', root + '/service-models'], token,
+                                28800, on_output=lambda channel, line: log(line))
+            log('Đã tải và kiểm tra checksum toàn bộ file model.')
+
+        if await parallel_channels(base):
+            log('Tải model song song với cài dependency.')
+            await run_together(download_models(), install_dependencies())
+        else:
+            log('Kết nối SSH không chạy được hai lệnh cùng lúc; tải model xong rồi mới cài dependency.')
+            await download_models()
+            await install_dependencies()
+
         result = await executor.run_input(q(root + "/llm-venv/bin/python") + " -c " + q(SNAPSHOT_SCRIPT),
                                           json.dumps({"root": root, "snapshots": lock["snapshots"],
                                                       "token": hosts.setting("hf_token")}), timeout=14400,
                                           on_output=lambda channel, line: log(line))
         if result.rc:
-            raise ValueError("Tải hoặc kiểm tra model LLM/TTS thất bại.")
+            raise ValueError("Kiểm tra model LLM/TTS thất bại.")
         log('Đã kiểm tra checksum toàn bộ file model. Đang kiểm tra ComfyUI; chưa đánh dấu workflow đã kiểm chứng.')
         if not running and not options.adopt_existing:
             log(await manage(executor, options, "start", []))

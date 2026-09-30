@@ -312,7 +312,10 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
 
     @app.get("/api/settings")
     def get_settings():
-        return {"hf_token_configured": bool(service.setting("hf_token")),
+        token = service.setting("hf_token")
+        return {"hf_token_configured": bool(token),
+                # Only the last four characters, so the UI can show which saved token is in use.
+                "hf_token_hint": f"hf_…{token[-4:]}" if token and len(token) > 12 else None,
                 "runpod_configured": bool(service.setting("runpod_api_key")),
                 "nodes_editable_in_ui": False, "manifests_directory": str(config.recipes_dir.parent / "manifests")}
 

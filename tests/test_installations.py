@@ -531,3 +531,153 @@ def test_install_failure_shows_redacted_tail():
     msg = install_failure(CommandResult(1, out, ''))
     assert 'something broke badly' in msg and 'hf_ABCDEFGHIJKL' not in msg and 'sig=abc' not in msg
     assert 'ensurepip' in install_failure(CommandResult(1, 'Error: ensurepip is not available', ''))
+
+
+def run_real_install(install_app, monkeypatch, *, parallel, fail=None):
+    """Actual install() orchestration with a scripted executor; no shell, no network."""
+    from types import SimpleNamespace
+
+    from studio.installer import PARALLEL_PROBE
+
+    _client, app, hid, _ = install_app
+    hosts = app.state.host_service
+    events, locks = [], {}
+
+    class Executor(FakeExecutor):
+        async def run(self, command, timeout=None, on_output=None):
+            if command == PARALLEL_PROBE:
+                await asyncio.sleep(0.05)
+                return CommandResult(0 if parallel else 1, 'historia-channel-ok' if parallel else '', '')
+            inner = shlex.split(command)[-1] if command.startswith('flock ') else command
+            if inner.startswith(('test -x ', 'test -f ')):
+                return CommandResult(1, '', '')
+            if 'git -C' in inner and 'checkout --detach' in inner:
+                events.append('git')
+            if 'torch==2.11.0' in inner:
+                events.append('torch-start')
+                await asyncio.sleep(0.05)
+                events.append('torch-end')
+                if fail == 'pip':
+                    return CommandResult(1, 'ERROR: ResolutionImpossible', '')
+            return CommandResult(0, '', '')
+
+        async def run_input(self, command, data, timeout=60, on_output=None):
+            payload = json.loads(data)
+            if 'urls' in payload:
+                return CommandResult(0, json.dumps({'ok': True, 'checked_files': len(payload['urls'])}), '')
+            if 'items' in payload:
+                locks['models'] = shlex.split(command)[4]
+                events.append('download-start')
+                try:
+                    await asyncio.sleep(0.3)
+                except asyncio.CancelledError:
+                    events.append('download-cancelled')
+                    raise
+                events.append('download-end')
+                if on_output:
+                    on_output('stdout', 'Downloaded bytes: 2 of 2\nModel ready: codec/config.json\nhf_secret\n')
+                if fail == 'download':
+                    return CommandResult(1, 'Model failed: codec/config.json (Checksum mismatch)', '')
+                return CommandResult(0, '', '')
+            return await self.run(command, timeout, on_output)
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, path):
+            return SimpleNamespace(is_success=False)
+
+    async def check(*args):
+        return 'test-comfy-version'
+
+    async def inspect(*args):
+        return sample_inventory()
+
+    executor = Executor()
+    monkeypatch.setattr(hosts, 'executor_for', lambda h: executor)
+    monkeypatch.setattr('studio.installer.inventory', inspect)
+    monkeypatch.setattr('studio.installer.httpx.AsyncClient', Client)
+    monkeypatch.setattr('studio.installer.check_backend', check)
+    options = HostOptions(root='/workspace/historia', remote_port=8190)
+    job = SimpleNamespace(host_id=hid, snapshot={'options': options.model_dump()})
+    logs = []
+    try:
+        result = asyncio.run(actual_install(hosts, job, sample_lock(), logs.append))
+    except ValueError as exc:
+        result = exc
+    return result, events, locks, logs
+
+
+def test_models_download_while_dependencies_install(install_app, monkeypatch):
+    result, events, locks, logs = run_real_install(install_app, monkeypatch, parallel=True)
+    assert not isinstance(result, Exception) and not result['verified']
+    # Checkout happens first (it needs an empty directory), then both run at the same time.
+    assert events[0] == 'git'
+    assert events.index('torch-start') < events.index('download-end')
+    assert events.index('download-start') < events.index('torch-end')
+    assert locks['models'].endswith('-models.lock')
+    assert 'Tải model song song với cài dependency.' in logs
+    assert 'Đã kiểm tra checksum: codec/config.json' in logs
+    assert not any('hf_secret' in line for line in logs)
+
+
+def test_sequential_fallback_when_channels_do_not_overlap(install_app, monkeypatch):
+    result, events, _, logs = run_real_install(install_app, monkeypatch, parallel=False)
+    assert not isinstance(result, Exception)
+    assert events == ['git', 'download-start', 'download-end', 'torch-start', 'torch-end']
+    assert any('tải model xong rồi mới cài dependency' in line for line in logs)
+
+
+def test_dependency_failure_cancels_download_and_reports_stage(install_app, monkeypatch):
+    result, events, _, _ = run_real_install(install_app, monkeypatch, parallel=True, fail='pip')
+    assert isinstance(result, ValueError) and 'ResolutionImpossible' in str(result)
+    assert 'download-cancelled' in events and 'download-end' not in events
+
+
+def test_download_failure_names_file_without_secrets(install_app, monkeypatch):
+    result, _, _, _ = run_real_install(install_app, monkeypatch, parallel=False, fail='download')
+    assert isinstance(result, ValueError)
+    assert str(result).startswith('codec/config.json: ')
+
+
+def test_parallel_probe_rejects_serialized_channels():
+    from studio.installer import PARALLEL_PROBE, parallel_channels
+
+    class Serial(FakeExecutor):
+        def __init__(self):
+            super().__init__()
+            self.lock = asyncio.Lock()
+
+        async def run(self, command, timeout=None, on_output=None):
+            assert command == PARALLEL_PROBE
+            async with self.lock:
+                await asyncio.sleep(2)
+            return CommandResult(0, 'historia-channel-ok', '')
+
+    class Broken(FakeExecutor):
+        async def run(self, command, timeout=None, on_output=None):
+            raise ConnectionError('gateway refused a second channel')
+
+    assert asyncio.run(parallel_channels(Serial())) is False
+    assert asyncio.run(parallel_channels(Broken())) is False
+
+
+def test_batch_progress_reaches_log_through_run_input():
+    class Executor(FakeExecutor):
+        async def run_input(self, command, data, timeout=60, on_output=None):
+            on_output('stdout', 'Downloaded bytes: 268435456 of 1073741824\nModel ready: wan-high\n'
+                                'Model ready: bad name; rm -rf /\nhttps://x?token=secret\n')
+            return CommandResult(0, '', '')
+    async def check():
+        logs = []
+        await InstallExecutor(Executor(), '/workspace/historia', scope='models').run_input(
+            'download', '{}', on_output=lambda *v: logs.append(v[1]))
+        assert logs == ['Đã tải 0.25 / 1.00 GiB model.', 'Đã kiểm tra checksum: wan-high']
+    asyncio.run(check())

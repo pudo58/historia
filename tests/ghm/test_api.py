@@ -45,3 +45,25 @@ def test_host_crud_and_key_pinning_over_http(tmp_path) -> None:
         assert client.get(f"/api/hosts/{host_id}").json()["label"] == "Updated 5090"
         assert client.delete(f"/api/hosts/{host_id}").status_code == 204
         assert client.get(f"/api/hosts/{host_id}").status_code == 404
+
+
+def test_hf_token_persists_in_database_and_is_never_returned(tmp_path) -> None:
+    token = "hf_" + "A1b2C3d4E5f6G7h8"
+    def app():
+        return create_app(Settings(database_url=f"sqlite:///{tmp_path / 'api.db'}", studio_root=tmp_path / "data"),
+                          SecretStore("test-key"), lambda host, secret: FakeExecutor())
+    with TestClient(app()) as client:
+        assert client.get("/api/settings").json()["hf_token_configured"] is False
+        assert client.post("/api/settings/hf-token", json={"token": token}).status_code == 200
+    import sqlite3
+    rows = sqlite3.connect(tmp_path / "api.db").execute("select name, encrypted_value from local_settings").fetchall()
+    assert [r[0] for r in rows] == ["hf_token"] and token not in str(rows)  # stored encrypted
+    # A restarted app reads the same encrypted row: no need to enter the token again.
+    with TestClient(app()) as client:
+        body = client.get("/api/settings").json()
+        assert body["hf_token_configured"] is True
+        assert body["hf_token_hint"] == "hf_…G7h8"
+        assert token not in str(body)
+        assert client.post("/api/settings/hf-token", json={"token": ""}).status_code == 200
+        body = client.get("/api/settings").json()
+        assert body["hf_token_configured"] is False and body["hf_token_hint"] is None

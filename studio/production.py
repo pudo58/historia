@@ -71,6 +71,19 @@ def set_active(checkpoint, ids):
         checkpoint.pop('current_job_id', None)
 
 
+def review_waiting(checkpoint):
+    """Scenes whose shot keyframes are generated but not yet approved, in queue order.
+
+    Older checkpoints only stored the single ``review_scene_id``.
+    """
+    queued = list(checkpoint.get('review_pending') or [])
+    legacy = checkpoint.get('review_scene_id')
+    if legacy and legacy not in queued:
+        queued.insert(0, legacy)
+    media = checkpoint.get('media') or {}
+    return [s for s in queued if not media.get(s, {}).get('shot_keyframes_approved')]
+
+
 def parallel_hosts(run):
     """Extra Pods that may render Wan clips of this run at the same time as the main Pod."""
     return [h for h in (run.consent or {}).get('parallel_host_ids') or [] if h != run.snapshot.get('host_id')]
@@ -285,27 +298,40 @@ class ProductionRuns:
             session.commit()
         return self.get(id)
 
-    def approve_keyframes(self, id, scene_id):
+    def approve_keyframes(self, id, scene_ids):
+        """Approve one or several scenes' shot keyframes; all-or-nothing."""
+        scene_ids = [scene_ids] if isinstance(scene_ids, str) else list(scene_ids)
         with self.service.sessions() as session:
             session.execute(text('BEGIN IMMEDIATE'))
             run = session.get(ProductionRun, id)
             if not run:
                 raise KeyError(id)
-            if run.status != 'keyframe_review' or run.checkpoint.get('review_scene_id') != scene_id:
-                raise ValueError('Lượt sản xuất không chờ duyệt ảnh của cảnh này.')
             cp = deepcopy(run.checkpoint)
-            scene = next((s for s in run.snapshot['scenes'] if s['id'] == scene_id), None)
-            media = cp.get('media', {}).get(scene_id, {})
-            selected = media.get('shot_keyframes') or []
+            waiting = review_waiting(cp)
+            # Early approval is allowed while other scenes' keyframes are still generating.
+            if run.status not in {'keyframe_review', 'running', 'pause_requested', 'paused'} or not scene_ids or any(
+                    scene_id not in waiting for scene_id in scene_ids):
+                raise ValueError('Lượt sản xuất không chờ duyệt ảnh của cảnh này.')
             from studio.media import scene_clip_count
-            duration = probe(self.service.artifact_path(media['speech_id']))['duration'] if media.get('speech_id') else 0
-            if (not scene or len(selected) != (scene_clip_count(scene, duration) if scene.get('image_strategy') == 'per_shot' else 1) or
-                    not all(self.jobs.artifact_valid(a) for a in selected)):
-                raise ValueError('Thiếu ảnh riêng hợp lệ; không chạy Wan.')
-            cp['media'][scene_id] = {**media, 'keyframe_approved': True,
-                                     'shot_keyframes_approved': True}
-            cp.pop('review_scene_id', None)
-            run.checkpoint, run.status = cp, 'running'
+            for scene_id in scene_ids:
+                scene = next((s for s in run.snapshot['scenes'] if s['id'] == scene_id), None)
+                media = cp.get('media', {}).get(scene_id, {})
+                selected = media.get('shot_keyframes') or []
+                duration = probe(self.service.artifact_path(media['speech_id']))['duration'] if media.get('speech_id') else 0
+                if (not scene or len(selected) != (scene_clip_count(scene, duration) if scene.get('image_strategy') == 'per_shot' else 1) or
+                        not all(self.jobs.artifact_valid(a) for a in selected)):
+                    raise ValueError('Thiếu ảnh riêng hợp lệ; không chạy Wan.')
+                cp['media'][scene_id] = {**media, 'keyframe_approved': True,
+                                         'shot_keyframes_approved': True}
+            left = [s for s in waiting if s not in scene_ids]
+            cp['review_pending'] = left
+            if left:
+                cp['review_scene_id'] = left[0]
+            else:
+                cp.pop('review_scene_id', None)
+            if run.status == 'keyframe_review' and not left:
+                run.status = 'running'
+            run.checkpoint = cp
             session.commit()
         return self.get(id)
 
@@ -353,8 +379,12 @@ class ProductionRuns:
                     cp['media'][current.scene_id] = {**cp['media'].get(current.scene_id, {}), **output}
                     if (current.kind == 'keyframe' and (current.snapshot['scene'].get('image_strategy') == 'per_shot' or current.snapshot['scene'].get('shot_list'))
                             and not cp['media'][current.scene_id].get('shot_keyframes_approved')):
-                        cp['review_scene_id'] = current.scene_id
-                        run.status = 'keyframe_review'
+                        # Queue for review but keep generating other scenes' keyframes:
+                        # the GPU no longer idles while one scene waits for a person.
+                        # Wan is held back until every queued scene is approved.
+                        waiting = cp.setdefault('review_pending', [])
+                        if current.scene_id not in waiting:
+                            waiting.append(current.scene_id)
                 else:
                     cp['artifact_ids'] = output['artifact_ids']
                     run.status, run.stage = 'completed', 'completed'
@@ -382,6 +412,13 @@ class ProductionRuns:
             dispatched = [j.id for j in remaining]
             stages = ('speech', 'keyframe', 'clip', 'rife', 'export') if project.get('frame_interpolation') == 'rife24' else ('speech', 'keyframe', 'clip', 'export')
             for kind in stages:
+                if kind == 'clip':
+                    waiting = review_waiting(cp)
+                    if waiting:
+                        # All keyframes are done; review them together before any Wan clip.
+                        cp['review_pending'], cp['review_scene_id'] = waiting, waiting[0]
+                        run.status, run.stage = 'keyframe_review', 'keyframe'
+                        break
                 run.stage = kind
                 if kind == 'keyframe':
                     duration = sum(probe(self.service.artifact_path(s['speech_id']))['duration'] for s in project['scenes'])

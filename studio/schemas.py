@@ -145,7 +145,17 @@ class Approval(StrictModel):
 
 
 class KeyframeBatchApproval(StrictModel):
-    scene_id: str
+    scene_id: str | None = None
+    scene_ids: list[str] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode='after')
+    def one_or_more(self):
+        if not self.scene_id and not self.scene_ids:
+            raise ValueError('Chọn ít nhất một cảnh để duyệt ảnh.')
+        return self
+
+    def ids(self) -> list[str]:
+        return list(dict.fromkeys(([self.scene_id] if self.scene_id else []) + self.scene_ids))
 
 
 class ChainFrameApproval(StrictModel):
