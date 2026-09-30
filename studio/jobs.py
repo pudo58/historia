@@ -191,14 +191,16 @@ class StudioJobs:
             self.event(job.id, f'Đã kiểm tra checksum model tùy chọn {asset.name}.')
 
     def dialogue_test(self, project_id, scene_id, text, voice=None):
-        """Queue a one-line trial: the voice-over of ``text``, then Wan S2V animates the scene's approved
-        keyframe so the character says it. Nothing about the scene or project changes."""
+        """Queue a one-line trial: the voice-over of ``text``, then Wan S2V animates the scene's keyframe
+        so the character says it. Nothing about the scene or project changes."""
         from studio.tts_device import new_tts_device
         project = self.service.project(project_id)
         scene = next((s for s in project['scenes'] if s['id'] == scene_id), None)
         text = ' '.join((text or '').split())
-        if not scene or not scene.get('keyframe_id') or not scene.get('keyframe_approved'):
-            raise ValueError('Chọn cảnh đã có ảnh được duyệt để thử nhân vật nói.')
+        # Any generated keyframe will do: a production run records its review in the run, not on the scene,
+        # and a trial only looks at the result, so it never needs the image to be approved.
+        if not scene or not scene.get('keyframe_id') or not self.artifact_valid(scene['keyframe_id']):
+            raise ValueError('Chọn cảnh đã có ảnh (tạo ở bước sản xuất) để thử nhân vật nói.')
         if not 2 <= len(text) <= 400:
             raise ValueError('Câu thoại cần từ 2 đến 400 ký tự (S2V thử tối đa khoảng 14 giây).')
         voice = (voice or project.get('voice') or '').strip()

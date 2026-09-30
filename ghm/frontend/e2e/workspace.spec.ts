@@ -388,7 +388,7 @@ test('saved Hugging Face token is shown once and not asked again',async({page})=
 test('character-speaks trial: blocked until S2V is installed, then sends one line for the chosen scene',async({page})=>{
   const state=await fixture(page,'completed');
   Object.assign(state.project,{host_id:'h',voice:'Voice A'});
-  Object.assign(state.project.scenes[2],{keyframe_id:'k2',keyframe_approved:true});
+  Object.assign(state.project.scenes[2],{keyframe_id:'k2',keyframe_approved:false});   // approval lives in the production run
   let installed=false;
   await page.route('**/api/studio/hosts/h/optional-models',route=>route.fulfill({json:{'wan-s2v':installed,'rife-v4.26':true}}));
   await page.goto('/?page=projects&project=p&tab=video');
@@ -399,7 +399,7 @@ test('character-speaks trial: blocked until S2V is installed, then sends one lin
   installed=true;
   await page.reload();
   await expect(panel.getByText(/Cài nhóm model Wan2\.2 S2V/)).toHaveCount(0);
-  await expect(panel.getByLabel(/Cảnh \(ảnh đã duyệt\)/)).toContainText('Cảnh 3');
+  await expect(panel.getByLabel(/Cảnh \(dùng ảnh đã tạo của cảnh\)/)).toContainText('Cảnh 3');
   const send=panel.getByRole('button',{name:/Thử nhân vật nói · dùng GPU/});
   await expect(send).toBeDisabled();                       // no line typed yet
   await panel.getByLabel(/Câu thoại của nhân vật/).fill('Quân ta đã thắng lớn!');

@@ -8,7 +8,7 @@ const MAX_CHARS=400;
 
 export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[]}){
   const client=useQueryClient();
-  const scenes=p.scenes.filter(s=>s.keyframe_id&&s.keyframe_approved);
+  const scenes=p.scenes.filter(s=>s.keyframe_id);
   const [sceneId,setSceneId]=useState('');
   const [text,setText]=useState('');
   const [busy,setBusy]=useState(false);
@@ -30,16 +30,16 @@ export default function DialogueTest({project:p,jobs}:{project:Project;jobs:Job[
   }
   let blocker='';
   if(!p.host_id)blocker='Chọn GPU cho dự án trong Thiết lập trước.';
-  else if(!scenes.length)blocker='Cần ít nhất một cảnh đã có ảnh được duyệt.';
+  else if(!scenes.length)blocker='Cần ít nhất một cảnh đã có ảnh (tạo ảnh ở bước sản xuất trước).';
   else if(models.isSuccess&&!ready)blocker='Cài nhóm model Wan2.2 S2V trong Thiết lập dự án → “Model GPU tùy chọn” trước.';
   return <section className="panel" aria-label="Thử nhân vật nói">
     <h2>Thử nhân vật nói</h2>
-    <p>Chọn một cảnh đã có ảnh, gõ <strong>một câu thoại tiếng Việt</strong>. Historia tạo giọng đọc, rồi Wan2.2 S2V làm nhân vật trong ảnh nói câu đó (miệng chuyển động theo tiếng). Đây là bản thử để bạn đánh giá; nó không thay clip hay lời dẫn của cảnh.</p>
+    <p>Chọn một cảnh đã có ảnh (không cần duyệt), gõ <strong>một câu thoại tiếng Việt</strong>. Historia tạo giọng đọc, rồi Wan2.2 S2V làm nhân vật trong ảnh nói câu đó (miệng chuyển động theo tiếng). Đây là bản thử để bạn đánh giá; nó không thay clip hay lời dẫn của cảnh.</p>
     <p className="alert notice">S2V dùng bộ mã hóa âm thanh tiếng Anh, nên độ khớp môi với tiếng Việt chưa được đảm bảo — đó chính là điều bản thử này kiểm tra. Bản thử dài tối đa khoảng 14 giây, chất lượng nháp, và dùng GPU đang thuê (chưa có số đo thời gian trên Pod của bạn; lần đầu còn phải nạp model 14B).</p>
     {blocker&&<p role="status" className="alert warning">{blocker}</p>}
     <fieldset disabled={busy||running||!!blocker}>
       <div className="form-grid">
-        <label>Cảnh (ảnh đã duyệt)
+        <label>Cảnh (dùng ảnh đã tạo của cảnh)
           <select value={chosen?.id||''} onChange={e=>setSceneId(e.target.value)}>
             {scenes.map(s=><option key={s.id} value={s.id}>{s.position}. {s.title}</option>)}
           </select>
