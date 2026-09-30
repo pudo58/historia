@@ -215,7 +215,8 @@ class Installations:
 
     async def execute_video_test(self, job):
         self.validate_snapshot(job)
-        log = lambda text: self.jobs.event(job.id, text)
+        def log(text):
+            return self.jobs.event(job.id, text)
         executor = self.hosts.executor_for(self.hosts._require_host(job.host_id))
         try:
             options = HostOptions.model_validate(job.snapshot['options'])
@@ -283,7 +284,8 @@ class Installations:
     async def execute(self, job):
         from studio.installer import install
         self.validate_snapshot(job)
-        log = lambda value: self.jobs.event(job.id, value)
+        def log(value):
+            return self.jobs.event(job.id, value)
         self.patch(job.host_id, 'installing' if job.kind == 'install' else 'verifying')
         if job.kind == 'install':
             log('Bắt đầu cài bộ đã xác nhận. Không sửa driver, không tự dừng ComfyUI có sẵn.')
@@ -293,7 +295,8 @@ class Installations:
             log('Đã cài. Chưa verified: bấm Kiểm chứng để tạo ảnh, ảnh chỉnh sửa, clip, giọng đọc và kiểm tra LLM.')
             return
         backend = self.jobs.backend
-        checkpoint = lambda stage, value: self.jobs.checkpoint(job.id, stage, value)
+        def checkpoint(stage, value):
+            return self.jobs.checkpoint(job.id, stage, value)
         started = time.monotonic()
         self.patch(job.host_id, 'verifying', components={name: {'status': 'not_verified'}
                    for name in ('qwen_image', 'qwen_edit', 'wan_i2v', 'tts', 'llm')})

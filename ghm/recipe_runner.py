@@ -8,10 +8,9 @@ from collections.abc import AsyncIterator
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from ghm.executors.base import CommandResult
 from ghm.models import RecipeLog, RecipeRun, RecipeStepRun, RunSnapshot, HostRuntime, Host
 from ghm.manifests import load_models, load_nodes, selected_models, ModelAsset, NodeAsset, node_command
-from ghm.recipes import Recipe, RecipeCatalog, RecipeStep
+from ghm.recipes import Recipe, RecipeCatalog
 from ghm.schemas import RunRead, RunStepRead, HostOptions
 from ghm.services.hosts import HostService
 from ghm.profiles import load_profiles, choose_profile
@@ -228,7 +227,8 @@ class RecipeRunner:
         state = self._ensure_step_state(run_id, step.id)
         context = snapshot["context"]
         run = self._require_run(run_id)
-        log = lambda value: self._log(run_id, step.id, "info", self._redact(value, secrets))
+        def log(value):
+            return self._log(run_id, step.id, "info", self._redact(value, secrets))
         self._set_step(run_id, step.id, "checking", state.attempts, None)
         if step.action == "shell":
             checked = await self._command(run_id, step.id, "check", step.check, step.timeout, executor, secrets, context)

@@ -1,5 +1,4 @@
 """Small, on-demand JPEG previews of verified local video artifacts."""
-import hashlib
 import os
 import re
 import subprocess

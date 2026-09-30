@@ -781,8 +781,10 @@ class StudioJobs:
             self.scene_result(job.scene_id, job=job, rife_clip_ids=source_ids)
             return
         ids = []
-        log = lambda message: self.event(job.id, message)
-        checkpoint = lambda stage, value: self.checkpoint(job.id, stage, value)
+        def log(message):
+            return self.event(job.id, message)
+        def checkpoint(stage, value):
+            return self.checkpoint(job.id, stage, value)
         async with self.backend.generation_session(job):
             for index, source_id in enumerate(source_ids):
                 current = self.service.require(Job, job.id)
@@ -972,8 +974,10 @@ class StudioJobs:
         if job.kind in {'install', 'verify'}:
             return await self.installations.execute(job)
         project, scene = job.snapshot["project"], job.snapshot["scene"]
-        log = lambda message: self.event(job.id, message)
-        checkpoint = lambda stage, value: self.checkpoint(job.id, stage, value)
+        def log(message):
+            return self.event(job.id, message)
+        def checkpoint(stage, value):
+            return self.checkpoint(job.id, stage, value)
         log("Bắt đầu tác vụ từ bản chụp dữ liệu đã lưu.")
         if job.kind == 'script':
             return await self.chapter_script(job, log)

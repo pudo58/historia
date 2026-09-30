@@ -70,8 +70,10 @@ async def execute(jobs, job):
     prompt = f"{project['style']}. {project['era']}. {project['location']}. {scene['visual_prompt']}. {scene['camera']}"
     started = time.monotonic()
     previous_elapsed = job.result.get('benchmark_elapsed_seconds', 0)
-    log = lambda message: jobs.event(job.id, message)
-    checkpoint = lambda stage, value: jobs.checkpoint(job.id, stage, value)
+    def log(message):
+        return jobs.event(job.id, message)
+    def checkpoint(stage, value):
+        return jobs.checkpoint(job.id, stage, value)
     ids = list(job.result.get('artifact_ids', []))
     try:
         async with AsyncExitStack() as stack:
