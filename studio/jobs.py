@@ -911,7 +911,7 @@ class StudioJobs:
             self.event(job.id, self.technical_detail(exc), level='warning')
             if job.kind in {'install', 'verify'}:
                 self.installations.patch(job.host_id, 'interrupted')
-        except (httpx.TransportError, asyncssh.Error, ConnectionError, TimeoutError):
+        except (httpx.TransportError, asyncssh.Error, ConnectionError, TimeoutError) as exc:
             message = "Mất liên lạc khi tạo giọng đọc. Bấm Đối chiếu để kiểm tra file hoặc tiến trình còn trên GPU; không tạo lượt mới." if job.kind == "speech" else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
             self.patch(job.id, status="reconciling", error=message)
             self.event(job.id, self.technical_detail(exc), level='warning')
