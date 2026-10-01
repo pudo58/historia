@@ -144,3 +144,9 @@ def test_comfy_failure_detail_reports_node_and_exception_without_paths():
     assert '/workspace' not in text and '\n' not in text
     assert comfy_failure_detail({'status_str': 'error', 'messages': []}) == ''
     assert comfy_failure_detail({'messages': 'junk'}) == ''
+
+
+def test_comfy_failure_detail_names_an_external_interrupt():
+    from studio.backend import comfy_failure_detail
+    text = comfy_failure_detail({'status_str': 'error', 'messages': [['execution_interrupted', {'node_id': '3'}]]})
+    assert 'ngắt từ bên ngoài' in text and 'không phải do thiếu VRAM' in text

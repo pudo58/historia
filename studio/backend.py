@@ -23,6 +23,8 @@ def comfy_failure_detail(status) -> str:
     """Node and exception ComfyUI itself recorded for a failed prompt (no paths, tokens or tracebacks)."""
     try:
         for entry in status.get("messages") or []:
+            if isinstance(entry, list) and len(entry) == 2 and entry[0] == "execution_interrupted":
+                return " ComfyUI ghi nhận prompt bị ngắt từ bên ngoài (có lệnh interrupt gửi tới cổng này), không phải do thiếu VRAM."
             if isinstance(entry, list) and len(entry) == 2 and entry[0] == "execution_error" and isinstance(entry[1], dict):
                 data = entry[1]
                 kind = re.sub(r"[^\w.]", "", str(data.get("exception_type", "")))[:80]
