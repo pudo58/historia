@@ -410,7 +410,7 @@ async def install(hosts, job, lock: dict, log) -> dict:
                 version = await check_backend(executor, options, log, False)
                 return {"comfy_version": version, "verified": False,
                         "message": "Đã cài. Chạy Kiểm chứng & benchmark để kiểm tra ảnh, video và giọng đọc thật."}
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ConnectionError, TimeoutError):
                 if attempt == 11:
                     raise ValueError("ComfyUI chưa khởi động được; xem log trên host.")
                 await asyncio.sleep(5)

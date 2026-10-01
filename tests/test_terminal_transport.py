@@ -147,3 +147,18 @@ def test_custom_comfy_path_requires_explicit_adopt():
         HostOptions(root='/workspace/historia', comfy_path='/ComfyUI')
     with pytest.raises(ValueError):
         HostOptions(adopt_existing=True, comfy_path='/tmp/../etc')
+
+
+def test_http_refused_loopback_port_is_a_connect_error_not_a_lost_connection():
+    """Basic SSH: ComfyUI not listening yet must look like a refused connection so installers retry."""
+    async def check():
+        e = Executor([('ERROR', b'URLError')])
+        async with httpx.AsyncClient(transport=terminal.TerminalHTTP(e, 8190)) as client:
+            with pytest.raises(httpx.ConnectError):
+                await client.get('http://127.0.0.1:8190/system_stats')
+        assert e.process.closed
+        other = Executor([('ERROR', b'ValueError')])
+        async with httpx.AsyncClient(transport=terminal.TerminalHTTP(other, 8190)) as client:
+            with pytest.raises(ConnectionError):
+                await client.get('http://127.0.0.1:8190/system_stats')
+    asyncio.run(check())

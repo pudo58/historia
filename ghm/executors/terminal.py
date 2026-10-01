@@ -162,7 +162,15 @@ class TerminalHTTP(httpx.AsyncBaseTransport):
                      'method': request.method, 'headers': dict(request.headers),
                      'body': base64.b64encode(body).decode(), 'timeout': 60}, 1800)
         try:
-            kind, data = await anext(frames)
+            try:
+                kind, data = await anext(frames)
+            except ConnectionError as exc:
+                # The remote agent could not open the loopback port (service not listening yet).
+                # That is a plain HTTP connect failure, exactly like a refused direct tunnel, so
+                # callers that wait for a service to come up retry it instead of losing the job.
+                if '(URLError)' in str(exc) or '(ConnectionRefusedError)' in str(exc):
+                    raise httpx.ConnectError('Dịch vụ trên Pod chưa mở cổng ' + str(self.port) + '.') from exc
+                raise
             if kind != 'HEAD':
                 raise httpx.RemoteProtocolError('Missing HTTP response header.')
             header = json.loads(data)
