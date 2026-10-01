@@ -350,3 +350,42 @@ def test_batch_keyframe_approval_is_all_or_nothing(setup, monkeypatch):
     saved = jobs.runs.get(run['id'])
     assert saved['status'] == 'keyframe_review'
     assert not saved['checkpoint']['media'][scene['id']].get('shot_keyframes_approved')
+
+
+def test_regenerate_one_scene_renders_new_images_without_reusing_the_old_job(setup, monkeypatch):
+    from studio.media import shot_count
+    client, service, jobs, project, scene, request = setup
+    monkeypatch.setattr('studio.media.probe', lambda path: {'duration': 60})
+    live = service.project(project['id'])['scenes'][0]
+    value = {k: live[k] for k in SceneInput.model_fields}
+    scene = service.update_scene(scene['id'], SceneUpdate(**{**value, 'image_strategy': 'per_shot'}, revision=live['revision']))
+    with service.sessions() as session:
+        from studio.models import Project
+        row = session.get(Project, project['id'])
+        row.data = {**row.data, 'knowledge_id': 'tran'}
+        session.commit()
+    run = jobs.runs.create(project['id'], request.model_copy(update={'scene_revisions': {scene['id']: scene['revision']}}))
+    jobs.runs.tick()
+    complete(service, jobs, run['id'], 'speech')
+    jobs.runs.tick()
+    first = complete_shots(service, jobs, run['id'], shot_count(60))
+    jobs.runs.tick()
+    state = jobs.runs.get(run['id'])
+    assert state['status'] == 'keyframe_review'
+    url = f"/api/studio/production-runs/{run['id']}/regenerate-keyframes"
+    assert client.post(url, json={'scene_id': 'nope'}).status_code in {400, 404, 409}
+    assert client.post(url, json={'scene_id': scene['id']}).status_code == 200
+    state = jobs.runs.get(run['id'])
+    media = state['checkpoint']['media'][scene['id']]
+    assert state['status'] == 'running'
+    assert not media.get('shot_keyframes') and not media.get('keyframe_id')
+    assert state['checkpoint']['review_pending'] == [] and 'keyframe:' + scene['id'] not in state['checkpoint']['jobs']
+    assert media['seed'] == live['seed'] + 1000 and state['checkpoint']['knowledge_by_scene'][scene['id']]['id'] == 'tran'
+    jobs.runs.tick()
+    second = service.require(Job, jobs.runs.get(run['id'])['checkpoint']['current_job_id'])
+    assert second.kind == 'keyframe' and second.id != first.id and second.input_hash != first.input_hash
+    assert second.snapshot['scene']['seed'] == live['seed'] + 1000
+    assert second.snapshot['project']['knowledge']['id'] == 'tran'
+    assert not [j for j in jobs.list(project['id']) if j['kind'] == 'clip']
+    # Never while the scene is rendering.
+    assert client.post(url, json={'scene_id': scene['id']}).status_code in {400, 409}

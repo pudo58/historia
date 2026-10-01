@@ -21,6 +21,7 @@ export default function KeyframeReview({ run, jobs, projectId, busy, approve }: 
   const [sceneId, setSceneId] = useState(queue[0]);
   const [shot, setShot] = useState(0);
   const [viewed, setViewed] = useState<Set<string>>(() => new Set());
+  const [confirming, setConfirming] = useState('');
   const panel = useRef<HTMLElement>(null);
   const current = queue.includes(sceneId) ? sceneId : queue[0];
   const index = queue.indexOf(current);
@@ -40,6 +41,12 @@ export default function KeyframeReview({ run, jobs, projectId, busy, approve }: 
     if (!queue.length) return;
     setSceneId(queue[(index + offset + queue.length) % queue.length]);
     setShot(0);
+  };
+  const canRegenerate = ['keyframe_review', 'paused'].includes(run.status);
+  const regenerate = async () => {
+    if (!current || busy) return;
+    setConfirming('');
+    await approve(`/api/studio/production-runs/${run.id}/regenerate-keyframes`, { scene_id: current });
   };
   const approveScenes = async (ids: string[]) => {
     if (!ids.length || busy) return;
@@ -110,6 +117,16 @@ export default function KeyframeReview({ run, jobs, projectId, busy, approve }: 
         {waitingAll
           ? <button disabled={busy || !!aiReview && ['queued', 'running', 'reconciling'].includes(aiReview.status)} onClick={() => void approve(`/api/studio/projects/${projectId}/jobs`, { kind: 'image_review', scene_id: current })}>Nhờ Qwen3-VL gắn cờ ảnh nghi lỗi · tùy chọn</button>
           : <small>Kiểm ảnh bằng Qwen3-VL mở khi đã tạo xong ảnh cả phim.</small>}
+        <div className="kf-regenerate">
+          {confirming === current
+            ? <>
+              <p role="status"><strong>Tạo lại {images.length} ảnh của cảnh này?</strong> Ảnh hiện tại bị bỏ, GPU tạo ảnh mới với seed mới và gói tri thức hiện tại. Có tốn thời gian thuê Pod.</p>
+              <button className="work-primary" disabled={busy} onClick={() => void regenerate()}>Xác nhận tạo lại</button>
+              <button disabled={busy} onClick={() => setConfirming('')}>Hủy</button>
+            </>
+            : <button disabled={busy || !canRegenerate} onClick={() => setConfirming(current)}
+              title={canRegenerate ? 'Bỏ ảnh của cảnh này và tạo lại bằng seed mới' : 'Tạm dừng lượt hoặc chờ tới bước duyệt ảnh để tạo lại ảnh của một cảnh'}>Tạo lại ảnh cảnh này</button>}
+        </div>
         {aiReview && <p>Kiểm ảnh AI: {names[aiReview.status] || aiReview.status}</p>}
         {aiReview?.result?.review_output != null && <pre className="review-output">{JSON.stringify(aiReview.result.review_output, null, 2)}</pre>}
       </aside>

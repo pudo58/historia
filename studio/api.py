@@ -22,6 +22,7 @@ from studio.schemas import (
     InstallConsent,
     JobInput,
     KeyframeBatchApproval,
+    RegenerateKeyframes,
     OutlineApproval,
     PendingClipConfig,
     ProductionInput,
@@ -358,6 +359,10 @@ def router(service, jobs, host_lock):
     @api.post('/production-runs/{id}/approve-keyframes')
     def approve_run_keyframes(id: str, payload: KeyframeBatchApproval):
         return jobs.runs.approve_keyframes(id, payload.ids())
+
+    @api.post('/production-runs/{id}/regenerate-keyframes')
+    def regenerate_run_keyframes(id: str, payload: RegenerateKeyframes):
+        return jobs.runs.regenerate_keyframes(id, payload.scene_id)
 
     @api.post('/production-runs/{id}/pending-clip-config')
     def configure_run_clips(id: str, payload: PendingClipConfig):

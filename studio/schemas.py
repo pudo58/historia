@@ -145,6 +145,10 @@ class Approval(StrictModel):
     approved: bool = True
 
 
+class RegenerateKeyframes(StrictModel):
+    scene_id: str = Field(min_length=1, max_length=64)
+
+
 class KeyframeBatchApproval(StrictModel):
     scene_id: str | None = None
     scene_ids: list[str] = Field(default_factory=list, max_length=500)

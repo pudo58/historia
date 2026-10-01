@@ -350,6 +350,21 @@ test('waiting for review after all keyframes names the next action',async({page}
   expect(state.mutations).toEqual([]);expect(state.errors).toEqual([]);
 });
 
+test('regenerate one scene: asks first, is disabled while the run is rendering, then posts the scene',async({page})=>{
+  const state=await reviewFixture(page);
+  await page.goto('/?page=projects&project=p&tab=video');
+  const review=page.getByRole('region',{name:'Duyệt ảnh keyframe'});
+  await expect(review.getByRole('button',{name:'Tạo lại ảnh cảnh này'})).toBeDisabled();
+  state.run.status='keyframe_review';
+  await page.reload();
+  await review.getByRole('button',{name:'Tạo lại ảnh cảnh này'}).click();
+  await expect(review.getByText(/Tạo lại 3 ảnh của cảnh này/)).toBeVisible();
+  expect(state.mutations).toEqual([]);
+  await review.getByRole('button',{name:'Xác nhận tạo lại'}).click();
+  await expect.poll(()=>state.mutations).toEqual(['/api/studio/production-runs/r/regenerate-keyframes']);
+  expect(state.bodies.at(-1)).toMatchObject({body:{scene_id:'s6'}});
+});
+
 test('GPU page shows Vietnamese labels and translated backend errors',async({page},testInfo)=>{
   const state=await fixture(page);
   await page.route('**/api/hosts/h/preflight',route=>route.fulfill({status:404,json:{detail:'Chưa có kết quả kiểm tra máy.'}}));

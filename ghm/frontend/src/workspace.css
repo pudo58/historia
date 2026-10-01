@@ -19,6 +19,7 @@
 .kf-head h3{margin:2px 0 4px;font-size:18px}
 .kf-head p{margin:0;color:var(--subtle);max-width:62ch}
 .kf-actions{display:flex;gap:8px;flex-wrap:wrap}
+.kf-regenerate{display:flex;flex-direction:column;gap:8px;align-items:flex-start;margin-top:12px}
 .kf-body{display:grid;grid-template-columns:minmax(180px,220px) minmax(0,1fr) minmax(200px,280px);min-height:0}
 .kf-scenes{display:flex;flex-direction:column;border-right:1px solid var(--border);max-height:520px;overflow:auto}
 .studio .editing-workspace .kf-scenes button{display:flex;gap:10px;align-items:center;text-align:left;border:0;border-bottom:1px solid var(--border);border-left:3px solid transparent;border-radius:0;background:transparent;padding:10px 12px}

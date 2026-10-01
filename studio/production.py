@@ -339,6 +339,54 @@ class ProductionRuns:
             session.commit()
         return self.get(id)
 
+    def regenerate_keyframes(self, id, scene_id):
+        """Throw away one scene's shot images (and what was built on them) and render them again.
+
+        New images need a different identity, otherwise the finished job would simply be reused: the scene
+        gets a new seed and the current knowledge pack. Only while nothing is rendering that scene.
+        """
+        with self.service.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            run = session.get(ProductionRun, id)
+            if not run:
+                raise KeyError(id)
+            if run.status not in {'keyframe_review', 'paused'}:
+                raise ValueError('Tạm dừng lượt (hoặc chờ tới bước duyệt ảnh) rồi mới tạo lại ảnh của một cảnh.')
+            scene = next((s for s in run.snapshot['scenes'] if s['id'] == scene_id), None)
+            if not scene:
+                raise ValueError('Cảnh không thuộc lượt sản xuất này.')
+            cp = deepcopy(run.checkpoint)
+            for job in (session.get(Job, job_id) for job_id in active_ids(cp)):
+                if job is not None and job.scene_id == scene_id and job.status not in {'completed', 'failed', 'cancelled'}:
+                    raise ValueError('Cảnh này đang có tác vụ chạy hoặc chờ đối chiếu; chờ xong hoặc đối chiếu trước.')
+            from studio import knowledge
+            regen = cp.setdefault('regen', {})
+            count = regen[scene_id] = regen.get(scene_id, 0) + 1
+            media = dict(cp.setdefault('media', {}).get(scene_id, {}))
+            for key in ('keyframe_id', 'shot_keyframes', 'keyframe_approved', 'shot_keyframes_approved',
+                        'clip_ids', 'clip_approved', 'rife_clip_ids'):
+                media.pop(key, None)
+            media['seed'] = int(scene.get('seed') or 0) + 1000 * count
+            cp['media'][scene_id] = media
+            for kind in ('keyframe', 'clip', 'rife'):
+                cp['jobs'].pop(f'{kind}:{scene_id}', None)
+            cp['jobs'].pop('export:film', None)
+            cp['review_pending'] = [s for s in cp.get('review_pending') or [] if s != scene_id]
+            if cp.get('review_scene_id') == scene_id:
+                if cp['review_pending']:
+                    cp['review_scene_id'] = cp['review_pending'][0]
+                else:
+                    cp.pop('review_scene_id', None)
+            pack = knowledge.load(self.service.root, run.snapshot.get('knowledge_id', ''), slim=True)
+            if pack:
+                cp.setdefault('knowledge_by_scene', {})[scene_id] = pack
+            if run.status == 'keyframe_review':
+                run.status, run.stage = 'running', 'keyframe'
+            run.error = None
+            run.checkpoint = cp
+            session.commit()
+        return self.get(id)
+
     def tick(self):
         with self.service.sessions() as session:
             ids = list(session.scalars(select(ProductionRun.id).where(ProductionRun.status.in_(['running', 'pause_requested']))))
@@ -440,6 +488,9 @@ class ProductionRuns:
                     key = kind + ':' + (scene['id'] if scene else 'film')
                     if key in cp['jobs']:
                         continue
+                    # A scene whose images were regenerated renders with the knowledge pack as it is now.
+                    refreshed = (cp.get('knowledge_by_scene') or {}).get(scene['id']) if scene else None
+                    scene_project = {**project, 'knowledge': refreshed} if refreshed else project
                     local_clip = kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan'
                     if kind != 'clip' and dispatched:
                         pending = True
@@ -463,7 +514,7 @@ class ProductionRuns:
                     clip_host = None if local_clip else lane if kind == 'clip' else project.get('host_id')
                     identity = {'production_version': 1, 'kind': kind, 'project_id': run.project_id,
                         'scene_id': scene['id'] if scene else None,
-                        'inputs': dependency_identity(project, scene, kind), 'workflow': workflow}
+                        'inputs': dependency_identity(scene_project, scene, kind), 'workflow': workflow}
                     hashed = canonical_hash({**identity, 'host': clip_host if kind != 'export' else None})
                     # A clip already finished on any Pod of this run is reused, not re-rendered.
                     candidates = [hashed, *(canonical_hash({**identity, 'host': h}) for h in hosts
@@ -481,7 +532,7 @@ class ProductionRuns:
                         artifact = session.get(Artifact, ids[0]) if ids and ids[0] else None
                         legacy = session.get(Job, artifact.job_id) if artifact and artifact.job_id else None
                         if legacy and legacy.status == 'completed' and legacy.kind == kind and legacy.snapshot.get('scene') and (kind != 'clip' or clip_output_matches(legacy, project, scene)) and dependency_identity(
-                                legacy.snapshot['project'], legacy.snapshot['scene'], kind) == dependency_identity(project, scene, kind):
+                                legacy.snapshot['project'], legacy.snapshot['scene'], kind) == dependency_identity(scene_project, scene, kind):
                             output = ({'speech_id': scene['speech_id'], 'duration': scene.get('duration', 0), 'shot_count': scene.get('shot_count', 0)} if kind == 'speech' else
                                       {'keyframe_id': scene['keyframe_id'], 'keyframe_approved': False} if kind == 'keyframe' else
                                       {'clip_ids': ids, 'clip_approved': False})
@@ -491,7 +542,7 @@ class ProductionRuns:
                     if existing and self.valid_output(kind, output):
                         job = existing
                     else:
-                        snap_project = deepcopy(project)
+                        snap_project = deepcopy(scene_project)
                         if kind == 'speech':
                             from studio.tts_device import snapshot_tts_device
                             snap_project['tts_device'] = snapshot_tts_device(project)
