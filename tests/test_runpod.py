@@ -127,6 +127,16 @@ def test_proxy_connect_from_pasted_command(client, monkeypatch, tmp_path):
     assert client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'ssh_command': COMMAND}).json()['action'] == 'already_connected'
 
 
+def test_already_linked_proxy_pod_can_be_reprobed_without_pasting_the_command(client, monkeypatch, tmp_path):
+    key = _configure(client, monkeypatch, tmp_path, [PROXY_POD])
+    client.post('/api/settings/runpod-ssh-key', json={'token': str(key)})
+    first = client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'ssh_command': COMMAND}).json()['host']
+    listing = client.get('/api/runpod/pods').json()['pods'][0]
+    assert listing['proxy_username'] == first['username']                       # the button can be enabled
+    again = client.post('/api/runpod/pods/89m3wc8ffwy6na/connect', json={'mode': 'proxy', 'all_gpus': True})
+    assert again.status_code == 200 and again.json()['host']['id'] == first['id']
+
+
 def test_proxy_username_from_api_and_direct_preferred(client, monkeypatch, tmp_path):
     exposed = {**PROXY_POD, 'machine': {'podHostId': '89m3wc8ffwy6na-aaaa1111'}}
     key = _configure(client, monkeypatch, tmp_path, [exposed])

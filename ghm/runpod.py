@@ -110,7 +110,10 @@ def summarize(pods: list[dict], hosts: list[dict], now: datetime | None = None) 
             'host_id': host['id'] if host else None, 'host_label': host['label'] if host else None,
             'host_ids': [h['id'] for h in matched],
             'ssh_ready': bool(running and ip and ssh_port),
-            'proxy_username': proxy_username(pod) if running else None,
+            # The API often hides the gateway user; a Historia host already pointing at this Pod's gateway knows it.
+            'proxy_username': (proxy_username(pod) or next(
+                (h['username'] for h in matched if h['address'].lower().rstrip('.') == PROXY_HOST
+                 and str(h.get('username', '')).startswith(f"{pod.get('id')}-")), None)) if running else None,
         })
     running = [p for p in result if p['status'] == 'RUNNING']
     return {'pods': result, 'running_count': len(running),

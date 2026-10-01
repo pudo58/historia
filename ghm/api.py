@@ -438,6 +438,11 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             address, port, username = pod["public_ip"], int(pod["ssh_port"]), "root"
         else:
             username = runpod.proxy_username(raw, payload.ssh_command)
+            if not username:   # re-probing a Pod that is already linked through the gateway: reuse its user
+                with sessions() as session:
+                    username = next((h.username for h in session.query(Host).all()
+                                     if h.address.lower().rstrip('.') == runpod.PROXY_HOST
+                                     and h.username.startswith(f"{pod_id}-")), None)
             if not username:
                 raise HTTPException(409, "Cần lệnh SSH ở tab Connect của Pod (dạng ssh <pod-id>-<mã>@ssh.runpod.io ...) để nối qua proxy.")
             address, port = runpod.PROXY_HOST, 22
