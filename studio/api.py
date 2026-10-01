@@ -83,6 +83,19 @@ def router(service, jobs, host_lock):
     def installation(id: str):
         return jobs.installations.state(id)
 
+    @api.get('/pod-groups')
+    def pod_groups():
+        """GPUs that are lanes of one multi-GPU Pod, grouped per Pod in GPU order, each with its install status."""
+        groups: dict[str, list[dict]] = {}
+        for host in jobs.hosts.list_hosts():
+            lane = jobs.installations.lane(host.id)
+            if lane and lane.get('pod_id'):
+                groups.setdefault(lane['pod_id'], []).append(
+                    {'id': host.id, 'label': host.label, 'index': lane['index'],
+                     'status': jobs.installations.state(host.id).get('status') or 'not_installed'})
+        return [{'pod_id': pod, 'hosts': sorted(items, key=lambda h: h['index'])}
+                for pod, items in groups.items() if len(items) > 1]
+
     @api.get('/hosts/{id}/optional-models')
     def optional_models(id: str):
         from studio.packs import optional_names

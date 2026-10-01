@@ -109,3 +109,25 @@ def test_auto_storyboard_gives_varied_shots_to_scenes_with_measured_audio(tmp_pa
     assert {s['direction'] for s in shots} == {'left-to-right'}
     assert client.post(f"/api/studio/projects/{project['id']}/auto-storyboard").json()['updated'] == []   # not redone
     assert len(auto_shots({'title': 'T', 'narration': 'A. B.'}, 5)) == 5
+
+
+def test_pod_groups_lists_gpu_lanes_of_one_pod_in_order(tmp_path):
+    import json
+    from ghm.models import Host
+    made = create_app(Settings(database_url=f'sqlite:///{tmp_path / "g.db"}', studio_root=tmp_path / 'data'),
+                      SecretStore('k'), lambda h, s: FakeExecutor())
+    client, hosts = TestClient(made), made.state.studio_jobs.hosts
+    ids = []
+    for label in ('Pod · GPU 0', 'Pod · GPU 1', 'Solo'):
+        with made.state.studio.sessions() as session:
+            row = Host(label=label, address='localhost', username='u', auth_kind='password', encrypted_secret='x',
+                       pinned_fingerprint='f')
+            session.add(row)
+            session.commit()
+            ids.append(row.id)
+    for index, host_id in enumerate(ids[:2]):
+        hosts.save_setting(f'host_lane:{host_id}', json.dumps({'pod_id': 'pod1', 'index': index, 'first': ids[0]}))
+    groups = client.get('/api/studio/pod-groups').json()
+    assert len(groups) == 1 and groups[0]['pod_id'] == 'pod1'
+    assert [h['id'] for h in groups[0]['hosts']] == ids[:2]
+    assert {h['status'] for h in groups[0]['hosts']} == {'not_installed'}

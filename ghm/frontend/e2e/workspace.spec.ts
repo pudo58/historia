@@ -460,3 +460,29 @@ test('auto storyboard: one button splits scenes that have measured audio into va
   await expect(page.getByText(/Đã lập shot list nhiều góc cho 1 cảnh/)).toBeVisible();
   expect(called).toBe(true);
 });
+
+
+test('pod group: GPUs of one Pod are grouped and installed with one button, skipping GPUs already installed',async({page})=>{
+  const calls:string[]=[];
+  const status:Record<string,string>={g0:'installed',g1:'not_installed',g2:'not_installed'};
+  const group=()=>[{pod_id:'podabcdef12',hosts:['g0','g1','g2'].map((id,index)=>({id,label:`Pod · GPU ${index}`,index,status:status[id]}))}];
+  const plan={plan_id:'pl',options:{root:'/workspace/historia',remote_port:8190,adopt_existing:false},missing_bytes:0,required_bytes:0,reserve_bytes:0,valid_files:1,blockers:[],inventory:{free_bytes:1,filesystem_path:'/',comfy_exists:true},lock:{models:[],snapshots:[],environments:{}}};
+  await page.route('**/api/**',route=>new URL(route.request().url()).pathname==='/api/auth/status'?route.fulfill({json:{enabled:false,configured:true,authenticated:true,min_length:8}}):route.fulfill({json:[]}));
+  await page.route('**/api/hosts',route=>route.fulfill({json:['g0','g1','g2'].map((id,i)=>({id,label:`Pod · GPU ${i}`,address:'a',port:22,username:'root',pinned_fingerprint:'f',gpu:{name:'A40',vram_gb:48}}))}));
+  await page.route(/\/api\/studio\/hosts\/g\d\/runtime$/,route=>route.fulfill({json:{jobs:[]}}));
+  await page.route('**/api/studio/pod-groups',route=>route.fulfill({json:group()}));
+  await page.route(/\/api\/studio\/hosts\/(g\d)\/installation(\/\w+)?$/,route=>{
+    const [, id, step]=route.request().url().match(/hosts\/(g\d)\/installation(\/\w+)?$/)!;
+    if(step==='/discover'){calls.push('discover '+id);return route.fulfill({json:{paths:[],services:[],suggested_options:plan.options,transport:'ssh'}});}
+    if(step==='/prepare')return route.fulfill({json:plan});
+    if(step==='/start'){calls.push('start '+id);status[id]='installed';return route.fulfill({json:{}});}
+    return route.fulfill({json:{status:status[id],jobs:[]}});});
+  await page.goto('/?page=packs');
+  await page.getByLabel('Máy GPU cần cài').selectOption('g1');
+  await expect(page.getByText('Cài cả Pod · 3 GPU')).toBeVisible();
+  await expect(page.getByText('1/3 GPU đã cài')).toBeVisible();
+  await page.getByLabel(/cho phép tự động tải\/cài phần thiếu lên cả 3 GPU/).check();
+  await page.getByRole('button',{name:'Cài cả Pod (2 GPU còn lại)'}).click();
+  await expect(page.getByText('Cả Pod đã cài xong')).toBeVisible({timeout:20000});
+  expect(calls).toEqual(['discover g1','start g1','discover g2','start g2']);
+});

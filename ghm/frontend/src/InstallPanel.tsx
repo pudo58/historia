@@ -12,6 +12,7 @@ type Discovery = {paths:string[];services:{port:number;version:string}[];suggest
 type Plan = {plan_id:string; options:Options; missing_bytes:number; required_bytes:number; reserve_bytes:number; valid_files:number; blockers:string[]; notes?:string[]; inventory:{free_bytes:number;filesystem_path:string;comfy_exists:boolean}; lock:{models:{name:string;repo:string;filename:string;size_bytes:number;revision:string}[]; snapshots:{name:string;repo:string;size_bytes:number;revision:string}[]; environments:Record<string,string>}};
 type Job = {id:string; kind:string;status:string;progress:number;error?:string;result:{artifact_ids?:string[];elapsed_seconds?:number}};
 type State = {status:string;plan?:Plan;jobs:Job[];verification?:{elapsed_seconds:number;artifact_ids:string[]}};
+type PodGroup={pod_id:string;hosts:{id:string;label:string;index:number;status:string}[]};
 const base='/api/studio';
 const active=['queued','running','cancelling','reconciling'];
 const names:Record<string,string>={not_installed:'Chưa cài',queued:'Đang chờ',installing:'Đang cài',installed:'Đã cài · chưa kiểm chứng',verifying:'Đang tạo output thử',verified:'Đã kiểm chứng bản nháp',interrupted:'Gián đoạn · cần kiểm tra',install_failed:'Cài đặt thất bại',verify_failed:'Kiểm chứng thất bại',running:'Đang chạy',completed:'Hoàn tất',failed:'Thất bại',cancelled:'Đã hủy',reconciling:'Cần đối chiếu',cancelling:'Đang ngắt'};
@@ -34,12 +35,16 @@ async function call<T>(path:string,body?:unknown,method=body===undefined?'GET':'
 export default function InstallPanel(){
   const [id,setId]=useState('');
   const hosts=useQuery({queryKey:['hosts'],queryFn:()=>call<Host[]>('/api/hosts')});
+  const groups=useQuery({queryKey:['pod-groups'],queryFn:()=>call<PodGroup[]>(`${base}/pod-groups`),refetchInterval:4000});
+  const grouped=new Set(groups.data?.flatMap(g=>g.hosts.map(h=>h.id))||[]);
   const selected=id || (hosts.data?.length===1 ? hosts.data[0].id : '');
+  const group=groups.data?.find(g=>g.hosts.some(h=>h.id===selected));
   const host=hosts.data?.find(h=>h.id===selected);
   return <><div className="page-heading"><div><p className="eyebrow">THIẾT LẬP MỘT LẦN</p><h1>Cài bộ Video lịch sử</h1><p>Chọn GPU → xem trước → xác nhận cài → tạo output kiểm chứng.</p></div></div>
     <div className="alert warning">Dừng cài, render hoặc đóng web KHÔNG dừng tiền thuê GPU. Bộ cài đang ở giai đoạn nghiệm thu; không tự hạ chất lượng hoặc sửa driver.</div>
-    <section className="panel"><label className="field"><span>Máy GPU cần cài</span><select value={selected} onChange={e=>setId(e.target.value)}><option value="">Chọn máy…</option>{hosts.data?.map(h=><option value={h.id} key={h.id}>{h.label} · {h.gpu?.name || h.address}</option>)}</select></label>{hosts.error && <ErrorDetail message={hosts.error.message}/>}{!hosts.data?.length && <p>Thêm SSH và xác nhận fingerprint trong mục Kết nối GPU trước. <button type="button" className="primary" onClick={()=>navigate({page:'gpu'})}>Đi tới Kết nối GPU →</button></p>}</section>
+    <section className="panel"><label className="field"><span>Máy GPU cần cài</span><select value={selected} onChange={e=>setId(e.target.value)}><option value="">Chọn máy…</option>{groups.data?.map(g=><optgroup key={g.pod_id} label={`Pod ${g.pod_id.slice(0,8)} · ${g.hosts.length} GPU`}>{g.hosts.map(m=>{const h=hosts.data?.find(x=>x.id===m.id);return <option value={m.id} key={m.id}>{m.label} · {h?.gpu?.name||h?.address||''}</option>;})}</optgroup>)}{hosts.data?.filter(h=>!grouped.has(h.id)).map(h=><option value={h.id} key={h.id}>{h.label} · {h.gpu?.name || h.address}</option>)}</select></label>{hosts.error && <ErrorDetail message={hosts.error.message}/>}{!hosts.data?.length && <p>Thêm SSH và xác nhận fingerprint trong mục Kết nối GPU trước. <button type="button" className="primary" onClick={()=>navigate({page:'gpu'})}>Đi tới Kết nối GPU →</button></p>}</section>
     <HuggingFaceToken/>
+    {group && <PodGroupInstall key={group.pod_id} group={group}/>}
     {host && <><HostInstall key={host.id} host={host}/><RuntimePanel key={`runtime-${host.id}`} hostId={host.id}/></>}
   </>;
 }
@@ -115,4 +120,58 @@ function HostInstall({host}:{host:Host}){
 
 function InstallJob({job,disabled,action}:{job:Job;disabled:boolean;action:(suffix:string)=>unknown}){
   return <section className="panel"><div className="section-heading"><h3>{job.kind==='install'?'Cài bộ AI':'Kiểm chứng'}</h3><StatusChip status={job.status}/></div>{job.kind==='verify' && <div className="job-progress"><span>Tiến độ: {job.progress}%</span><div className="progress-track" role="progressbar" aria-label="Tiến độ kiểm chứng" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100}><span style={{width:`${Math.min(100,Math.max(0,job.progress))}%`}}/></div></div>}{job.error && <ErrorDetail message={job.error}/>}<div className="actions">{active.includes(job.status) && <button disabled={disabled} onClick={()=>action('cancel')}>Ngắt tác vụ</button>}{(['interrupted','reconciling'].includes(job.status) || (job.kind==='install' && job.status==='failed')) && <button disabled={disabled} onClick={()=>action('resume')}>Kiểm tra khóa & tiếp tục</button>}</div><JobEvents id={job.id} active={active.includes(job.status)}/><div className="downloads">{job.result.artifact_ids?.map(id=><div key={id}><a href={`${base}/artifacts/${id}/file`} target="_blank" rel="noreferrer">Xem output {id.slice(0,8)} ↗</a><a href={`${base}/artifacts/${id}/file?download=true`}>Tải output</a></div>)}</div></section>;
+}
+
+const INSTALLED=['installed','verifying','verified','verify_failed'];
+const FAILED=['install_failed','interrupted'];
+const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+
+function PodGroupInstall({group}:{group:PodGroup}){
+  const client=useQueryClient();
+  const [consent,setConsent]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [stage,setStage]=useState('');
+  const [error,setError]=useState('');
+  const done=group.hosts.filter(h=>INSTALLED.includes(h.status)).length;
+  const first=group.hosts[0];
+  async function installLane(hostId:string,label:string){
+    const url=`${base}/hosts/${hostId}/installation`;
+    let state=await call<State>(url);
+    if(INSTALLED.includes(state.status))return;
+    if(!state.jobs.some(j=>active.includes(j.status))){
+      setStage(`${label}: kiểm tra GPU và SSH…`);
+      const d=await call<Discovery>(url+'/discover',{});
+      if(d.paths.length>1||d.services.length>1||((d.paths.length>0||d.services.length>0)&&!d.suggested_options.adopt_existing))
+        throw new Error(`${label}: phát hiện môi trường ComfyUI chưa xác định rõ. Cài riêng GPU này bằng cấu hình nâng cao.`);
+      setStage(`${label}: kiểm tra model và dung lượng…`);
+      const prepared=await call<Plan>(url+'/prepare',d.suggested_options);
+      if(prepared.blockers.length)throw new Error(`${label}: ${prepared.blockers.join(' ')}`);
+      setStage(`${label}: bắt đầu cài…`);
+      await call(url+'/start',{plan_id:prepared.plan_id,license_accepted:true});
+    }
+    for(let waited=0;;waited++){
+      await sleep(3000);
+      state=await call<State>(url);
+      await client.invalidateQueries({queryKey:['pod-groups']});
+      if(INSTALLED.includes(state.status))return;
+      if(FAILED.includes(state.status)||(state.status==='not_installed'&&waited>20))
+        throw new Error(`${label}: cài chưa xong (${names[state.status]||state.status}). Mở GPU này để xem lỗi rồi bấm lại để tiếp tục.`);
+      setStage(`${label}: ${names[state.status]||'đang cài'}…`);
+    }
+  }
+  async function installPod(){
+    setBusy(true);setError('');
+    try{
+      for(const h of group.hosts)await installLane(h.id,h.label);   // GPU 0 first: the others reuse its models
+      setStage('');await client.invalidateQueries();
+    }catch(e){setError((e as Error).message);}finally{setBusy(false);}
+  }
+  return <section className="panel pod-group" aria-label="Cài cả Pod">
+    <div className="section-heading"><h2>Cài cả Pod · {group.hosts.length} GPU</h2><span>{done}/{group.hosts.length} GPU đã cài</span></div>
+    <p>Các GPU này nằm trong cùng một Pod. GPU 0 cài đầy đủ trước ({first.label}); các GPU còn lại dùng chung thư mục model nên chỉ cài thêm rất nhanh. Một lần bấm sẽ cài lần lượt cả nhóm và tự bỏ qua GPU đã cài xong; bấm lại để tiếp tục nếu bị gián đoạn. Giữ trang mở khi đang chạy.</p>
+    <ul className="pod-lanes">{group.hosts.map(h=><li key={h.id}><strong>GPU {h.index}</strong> · {h.label} <StatusChip status={h.status}/></li>)}</ul>
+    <label className="install-consent"><input type="checkbox" checked={consent} disabled={busy} onChange={e=>setConsent(e.target.checked)}/> Tôi đã xem điều kiện sử dụng bộ model và cho phép tự động tải/cài phần thiếu lên cả {group.hosts.length} GPU của Pod này.</label>
+    <button className="primary" disabled={busy||!consent||done===group.hosts.length} onClick={()=>void installPod()}>{busy?(stage||'Đang cài…'):done===group.hosts.length?'Cả Pod đã cài xong':`Cài cả Pod (${group.hosts.length-done} GPU còn lại)`}</button>
+    {error&&<ErrorDetail message={error}/>}
+  </section>;
 }
