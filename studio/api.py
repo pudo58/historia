@@ -17,6 +17,7 @@ from studio.schemas import (
     ChainFrameApproval,
     CharacterInput,
     DialogueTestInput,
+    KnowledgeImportInput,
     KnowledgePackInput,
     VoiceAuditionInput,
     InstallConsent,
@@ -405,6 +406,22 @@ def router(service, jobs, host_lock):
         if not pack:
             raise KeyError(pack_id)
         return pack
+
+    @api.get('/knowledge/{pack_id}/export')
+    def knowledge_export(pack_id: str):
+        from fastapi.responses import JSONResponse
+
+        from studio import knowledge
+        exported = knowledge.export_pack(service.root, pack_id)
+        if not exported:
+            raise KeyError(pack_id)
+        return JSONResponse(exported, headers={'Content-Disposition': f'attachment; filename="historia-tri-thuc-{pack_id}.json"'})
+
+    @api.post('/knowledge/import', status_code=201)
+    def knowledge_import(payload: KnowledgeImportInput):
+        from studio import knowledge
+        saved = knowledge.import_pack(service.root, payload.data, payload.new_id, payload.overwrite)
+        return knowledge.load(service.root, saved['id'], slim=True)
 
     @api.put('/knowledge/{pack_id}')
     def knowledge_save(pack_id: str, payload: KnowledgePackInput):

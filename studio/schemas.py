@@ -243,6 +243,24 @@ class KnowledgePackInput(StrictModel):
     sources: list[KnowledgeSource] = Field(default_factory=list, max_length=80)
 
 
+class KnowledgeFact(StrictModel):
+    title: str = Field(default='', max_length=300)
+    text: str = Field(max_length=3000)
+    ref: str = Field(default='', max_length=400)
+    year: int | str | None = None
+
+
+class KnowledgePackFile(KnowledgePackInput):
+    """A pack as it travels in an exported file: the editable fields plus the fact base."""
+    facts: dict[str, list[KnowledgeFact]] = Field(default_factory=dict, max_length=20)
+
+
+class KnowledgeImportInput(StrictModel):
+    data: dict
+    new_id: str | None = Field(default=None, pattern=r'^[a-z0-9][a-z0-9-]{0,39}$')
+    overwrite: bool = False
+
+
 class DialogueTestInput(StrictModel):
     """One spoken line for the "character speaks" trial (Wan S2V), on a scene with an approved keyframe."""
     scene_id: str

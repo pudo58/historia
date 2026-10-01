@@ -207,3 +207,47 @@ def test_shots_of_a_short_narration_do_not_repeat_the_same_words():
             'bắt được quân ta, thấy người nào cũng thích hai chữ Sát Thát, chúng tức lắm, giết hại rất nhiều.')
     excerpts = [s['narration_excerpt'] for s in auto_shots({'title': 'T', 'narration': text}, 4)]
     assert len(set(excerpts)) == 4 and all(excerpts)
+
+
+def test_export_then_import_round_trips_the_whole_pack_including_the_fact_base(tmp_path):
+    client, _ = app(tmp_path)
+    response = client.get('/api/studio/knowledge/tran/export')
+    assert response.status_code == 200 and 'historia-tri-thuc-tran.json' in response.headers['content-disposition']
+    exported = response.json()
+    original = knowledge.load(tmp_path / 'data', 'tran')
+    assert exported['format'] == 'historia-knowledge-pack' and exported['pack']['facts'] == original['facts']
+    assert exported['pack_version'] == original['version'] and 'builtin' not in exported['pack']
+    assert client.get('/api/studio/knowledge/nope/export').status_code == 404
+    copy = client.post('/api/studio/knowledge/import', json={'data': exported, 'new_id': 'tran-ban-sao'})
+    assert copy.status_code == 201 and not copy.json()['builtin'] and copy.json()['id'] == 'tran-ban-sao'
+    assert sum(copy.json()['fact_counts'].values()) == sum(len(v) for v in original['facts'].values())
+    again = client.get('/api/studio/knowledge/tran-ban-sao/export').json()
+    assert again['pack']['facts'] == original['facts'] and again['pack']['roles'] == original['roles']
+
+
+def test_import_refuses_to_replace_a_pack_unless_asked_and_replaces_it_whole(tmp_path):
+    client, _ = app(tmp_path)
+    exported = client.get('/api/studio/knowledge/tran/export').json()
+    refused = client.post('/api/studio/knowledge/import', json={'data': exported})
+    assert refused.status_code == 409 and 'đã tồn tại' in refused.json()['detail']
+    bare = {**exported['pack'], 'visual': 'Imported look.'}
+    bare.pop('facts')
+    done = client.post('/api/studio/knowledge/import', json={'data': bare, 'overwrite': True})
+    assert done.status_code == 201 and done.json()['visual'] == 'Imported look.' and done.json()['fact_counts'] == {}
+    assert knowledge.load(tmp_path / 'data', 'tran')['builtin'] is False
+
+
+def test_import_rejects_files_that_are_not_valid_packs(tmp_path):
+    client, _ = app(tmp_path)
+    good = client.get('/api/studio/knowledge/tran/export').json()
+
+    def attempt(data, **extra):
+        return client.post('/api/studio/knowledge/import', json={'data': data, 'new_id': 'thu', **extra})
+    assert attempt({'format': 'other', 'pack': good['pack']}).status_code == 409
+    assert attempt({**good, 'format_version': 99}).status_code == 409
+    assert attempt({**good, 'pack': {**good['pack'], 'roles': 'oops'}}).status_code == 409
+    assert attempt({**good, 'pack': {**good['pack'], 'unexpected': 1}}).status_code == 409
+    assert attempt({**good, 'pack': {**good['pack'], 'facts': {'Bad Kind': []}}}).status_code == 409
+    assert attempt({**good, 'pack': {**good['pack'], 'facts': {'events': [{'text': 'x' * 4000}]}}}).status_code == 409
+    assert client.post('/api/studio/knowledge/import', json={'data': good, 'new_id': '../x'}).status_code == 422
+    assert [p['id'] for p in client.get('/api/studio/knowledge').json()] == ['tran']   # nothing was saved

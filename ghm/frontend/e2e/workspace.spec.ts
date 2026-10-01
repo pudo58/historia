@@ -527,6 +527,31 @@ test('dynasty knowledge: the project offers packs and the editor saves the edite
 });
 
 
+test('dynasty knowledge: a pack can be exported and a file imported, with conflicts explained',async({page})=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project,{knowledge_id:'tran'});
+  const posts:unknown[]=[];
+  await page.route('**/api/studio/knowledge',route=>route.fulfill({json:[{id:'tran',name:'Nhà Trần',period:'1225–1400',builtin:true,status:'',version:'abc'}]}));
+  await page.route('**/api/studio/knowledge/tran',route=>route.fulfill({json:{id:'tran',name:'Nhà Trần',period:'',status:'',script:'',visual:'',avoid:'',roles:[],sources:[],builtin:true,version:'abc'}}));
+  await page.route('**/api/studio/knowledge/import',route=>{
+    const body=route.request().postDataJSON() as {overwrite:boolean};posts.push(body);
+    return body.overwrite?route.fulfill({status:201,json:{id:'tran',name:'Nhà Trần',builtin:false}})
+      :route.fulfill({status:409,json:{detail:'Gói «tran» đã tồn tại (bản có sẵn trong ứng dụng). Đổi mã gói hoặc chọn ghi đè.'}});});
+  await page.goto('/?page=projects&project=p&tab=idea');
+  await page.getByText('Nhập / xuất gói tri thức').click();
+  await expect(page.getByRole('link',{name:/Tải file gói tri thức/})).toHaveAttribute('href','/api/studio/knowledge/tran/export');
+  await page.getByLabel('File gói tri thức (.json)').setInputFiles({name:'p.json',mimeType:'application/json',
+    buffer:Buffer.from(JSON.stringify({format:'historia-knowledge-pack',format_version:1,pack:{id:'tran',name:'Nhà Trần'}}))});
+  await expect(page.getByText(/Gói trong file/)).toContainText('tran');
+  await page.getByRole('button',{name:'Nhập gói'}).click();
+  await expect(page.getByRole('alert')).toContainText('đã tồn tại');
+  await page.getByLabel(/Ghi đè nếu đã có gói/).check();
+  await page.getByRole('button',{name:'Nhập gói'}).click();
+  await expect(page.getByText(/Đã nhập gói «Nhà Trần»/)).toBeVisible();
+  expect(posts).toHaveLength(2);
+});
+
+
 test('auto storyboard: one button splits scenes that have measured audio into varied shots',async({page})=>{
   const state=await fixture(page,'completed');
   Object.assign(state.project.scenes[0],{speech_id:'a1',shot_list:[],motion:'wan'});

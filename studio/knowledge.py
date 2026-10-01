@@ -6,6 +6,7 @@ Built-in packs ship in ``studio/knowledge/*.json`` (read-only); a pack saved by 
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 BUILTIN = Path(__file__).parent / 'knowledge'
@@ -90,6 +91,69 @@ def save(root: Path, pack: dict) -> dict:
     temporary.write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding='utf-8')
     temporary.replace(target)
     return load(root, clean['id'])
+
+
+FORMAT = 'historia-knowledge-pack'
+FORMAT_VERSION = 1
+MAX_IMPORT_BYTES = 8 * 1024 * 1024
+MAX_FACTS = 20000
+FACT_KIND = re.compile(r'^[a-z][a-z0-9_]{0,39}$')
+
+
+def export_pack(root: Path, pack_id: str) -> dict | None:
+    """The whole pack (editable fields and fact base) in a file envelope that ``import_pack`` accepts back."""
+    pack = load(root, pack_id)
+    if not pack:
+        return None
+    body = {k: v for k, v in pack.items() if k not in {'builtin', 'version', 'fact_counts'}}
+    return {'format': FORMAT, 'format_version': FORMAT_VERSION,
+            'exported_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'pack_version': pack['version'], 'pack': body}
+
+
+def read_import(data: dict) -> dict:
+    """Validate an exported file (or a bare pack object) and return the clean pack; ValueError says what is wrong."""
+    from pydantic import ValidationError
+
+    from studio.schemas import KnowledgePackFile
+    if len(json.dumps(data, ensure_ascii=False)) > MAX_IMPORT_BYTES:
+        raise ValueError('File gói tri thức vượt 8 MB.')
+    if 'pack' in data or 'format' in data:
+        if data.get('format') != FORMAT:
+            raise ValueError('Đây không phải file gói tri thức của Historia (thiếu định dạng "%s").' % FORMAT)
+        if not isinstance(data.get('format_version'), int) or data['format_version'] > FORMAT_VERSION:
+            raise ValueError('File được xuất từ phiên bản Historia mới hơn; hãy cập nhật ứng dụng rồi nhập lại.')
+        data = data.get('pack')
+        if not isinstance(data, dict):
+            raise ValueError('File không có nội dung gói tri thức.')
+    try:
+        pack = KnowledgePackFile.model_validate(data)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        where = '.'.join(str(part) for part in first['loc']) or 'gói'
+        raise ValueError(f'Gói tri thức không hợp lệ ở "{where}": {first["msg"]}.') from None
+    clean = pack.model_dump(exclude_none=True)
+    bad = [kind for kind in clean['facts'] if not FACT_KIND.match(kind)]
+    if bad:
+        raise ValueError(f'Tên nhóm tư liệu không hợp lệ: {bad[0]}.')
+    if sum(len(items) for items in clean['facts'].values()) > MAX_FACTS:
+        raise ValueError(f'Gói có quá {MAX_FACTS} mục tư liệu.')
+    if not clean['facts']:
+        del clean['facts']
+    return clean
+
+
+def import_pack(root: Path, data: dict, new_id: str | None = None, overwrite: bool = False) -> dict:
+    pack = read_import(data)
+    if new_id:
+        pack['id'] = new_id
+    existing = load(root, pack['id'])
+    if existing and not overwrite:
+        kind = 'có sẵn trong ứng dụng' if existing['builtin'] else 'riêng của bạn'
+        raise ValueError(f'Gói «{pack["id"]}» đã tồn tại (bản {kind}). Đổi mã gói hoặc chọn ghi đè.')
+    if 'facts' not in pack:
+        pack['facts'] = {}   # an import replaces the pack as a whole, it never inherits the old fact base
+    return save(root, pack)
 
 
 def _norm(text: str) -> str:

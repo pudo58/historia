@@ -87,3 +87,60 @@ export function KnowledgeEditor({packId}:{packId?:string}){
     {message&&<p role="status">{message}</p>}{error&&<p role="alert" className="alert error">{error}</p>}
   </details>;
 }
+
+type Loaded={name:string;data:Record<string,unknown>;id:string;packName:string};
+
+/** Export a pack to a .json file and import one back (a file from this app, or a bare pack object). */
+export function KnowledgeTransfer({current}:{current?:string}){
+  const client=useQueryClient();
+  const list=useQuery({queryKey:['knowledge'],queryFn:()=>read<Listing[]>('/api/studio/knowledge')});
+  const [exportId,setExportId]=useState('');
+  const [file,setFile]=useState<Loaded|null>(null);
+  const [newId,setNewId]=useState('');
+  const [overwrite,setOverwrite]=useState(false);
+  const [message,setMessage]=useState('');
+  const [error,setError]=useState('');
+  const chosen=exportId||current||list.data?.[0]?.id||'';
+  async function pick(input:HTMLInputElement){
+    const picked=input.files?.[0];
+    setFile(null);setError('');setMessage('');setNewId('');setOverwrite(false);
+    if(!picked)return;
+    try{
+      const data=JSON.parse(await picked.text()) as Record<string,unknown>;
+      if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('x');
+      const pack=((data.pack&&typeof data.pack==='object'?data.pack:data) as Record<string,unknown>);
+      setFile({name:picked.name,data,id:String(pack.id||''),packName:String(pack.name||'')});
+    }catch{setError('File không đọc được: cần file .json xuất từ Historia.');}
+  }
+  async function importPack(){
+    if(!file)return;
+    setError('');setMessage('');
+    try{
+      const response=await fetch('/api/studio/knowledge/import',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({data:file.data,new_id:newId.trim()||null,overwrite})});
+      const body=await response.json();
+      if(!response.ok)throw new Error(typeof body.detail==='string'?body.detail:'Dữ liệu gói không hợp lệ.');
+      setMessage(`Đã nhập gói «${body.name}» (mã ${body.id}).`);setFile(null);
+      await client.invalidateQueries();
+    }catch(e){setError((e as Error).message);}
+  }
+  return <details className="panel knowledge-transfer"><summary>Nhập / xuất gói tri thức</summary>
+    <h3>Xuất</h3>
+    <div className="form-grid">
+      <Field label="Gói cần xuất"><select value={chosen} onChange={e=>setExportId(e.target.value)}>
+        {list.data?.map(p=><option key={p.id} value={p.id}>{p.name} · {p.period}</option>)}</select></Field>
+    </div>
+    <p>{chosen?<a className="button" href={`/api/studio/knowledge/${chosen}/export`} download>Tải file gói tri thức (.json)</a>:'Chưa có gói nào.'}</p>
+    <small>File gồm cả phần chỉnh được lẫn toàn bộ tư liệu trích từ sách, dùng để sao lưu hoặc chuyển sang máy khác.</small>
+    <h3>Nhập</h3>
+    <Field label="File gói tri thức (.json)"><input type="file" accept=".json,application/json" onChange={e=>void pick(e.currentTarget)}/></Field>
+    {file&&<>
+      <p role="status">Gói trong file: <strong>{file.packName||'(chưa đặt tên)'}</strong> · mã <code>{file.id||'?'}</code></p>
+      <div className="form-grid">
+        <Field label="Mã mới (để trống = giữ mã trong file)"><input value={newId} maxLength={40} placeholder="vd: tran-ban-sao" onChange={e=>setNewId(e.target.value.toLowerCase())}/></Field>
+      </div>
+      <label className="check"><input type="checkbox" checked={overwrite} onChange={e=>setOverwrite(e.target.checked)}/> Ghi đè nếu đã có gói cùng mã (ảnh đã tạo theo gói cũ sẽ không còn khớp)</label>
+      <div className="actions"><button type="button" className="primary" onClick={()=>void importPack()}>Nhập gói</button></div></>}
+    {message&&<p role="status">{message}</p>}{error&&<p role="alert" className="alert error">{error}</p>}
+  </details>;
+}
