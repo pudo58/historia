@@ -27,7 +27,7 @@ def test_role_lines_are_added_only_when_the_scene_mentions_that_role(tmp_path):
     court = knowledge.visual_for_scene(pack, {'visual_prompt': 'A king hands a seal to a child.', 'narration': ''})
     assert 'yellow robe' in court and 'ding' not in court and 'tattoo' not in court
     field = knowledge.visual_for_scene(pack, {'visual_prompt': 'Soldiers march at dawn.', 'narration': 'Quân ta xuất trận.'})
-    assert '殺韃' in field and 'yellow robe' not in field
+    assert 'topknot' in field and '殺韃' not in field and 'yellow robe' not in field
     assert knowledge.visual_for_scene(None, {'visual_prompt': 'x'}) == ''
 
 
@@ -187,3 +187,23 @@ def test_pack_reconciles_the_toan_thu_with_viet_nam_su_luoc_and_the_costume_stud
     assert 'upturned brim' in dance
     women = knowledge.visual_for_scene(pack, {'visual_prompt': 'The queen walks through the garden', 'narration': ''})
     assert 'white lining' in women and 'bun' in women
+
+
+def test_image_text_gives_men_a_topknot_and_a_concrete_costume_never_a_modern_cut(tmp_path):
+    pack = knowledge.load(tmp_path, 'tran')
+    soldiers = knowledge.visual_for_scene(pack, {'visual_prompt': 'Vietnamese soldiers retreat down a road', 'narration': ''})
+    for text in (pack['visual'], soldiers):
+        assert 'cropped' not in text and 'short modern haircut' not in text.replace('no short modern haircut', '')
+    assert 'topknot' in soldiers and 'hemp tunic' in soldiers and 'bare feet' in soldiers
+    assert '殺韃' not in soldiers                                   # only when the scene is about the tattoo
+    assert '殺韃' in knowledge.visual_for_scene(pack, {'visual_prompt': 'a soldier forearm tattooed', 'narration': ''})
+    yuan = knowledge.visual_for_scene(pack, {'visual_prompt': 'Yuan cavalry charge', 'narration': ''})
+    assert 'fur' in yuan and 'braids' in yuan and 'foreign' in yuan
+
+
+def test_shots_of_a_short_narration_do_not_repeat_the_same_words():
+    from studio.storyboard import auto_shots
+    text = ('Tháng giêng năm 1285, Ô Mã Nhi đánh vào Vạn Kiếp và núi Phả Lại. Ngày mười hai, giặc đánh vào Gia Lâm, '
+            'bắt được quân ta, thấy người nào cũng thích hai chữ Sát Thát, chúng tức lắm, giết hại rất nhiều.')
+    excerpts = [s['narration_excerpt'] for s in auto_shots({'title': 'T', 'narration': text}, 4)]
+    assert len(set(excerpts)) == 4 and all(excerpts)

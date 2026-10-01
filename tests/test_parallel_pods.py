@@ -262,3 +262,23 @@ def test_an_extra_pod_without_image_models_is_not_given_keyframes(setup, monkeyp
         (job,) = active(service, run['id'])
         assert job.kind == 'keyframe' and job.host_id == main and job.scene_id == scene['id']
         complete(service, jobs, job.id)
+
+
+def test_lost_contact_leaves_the_technical_reason_in_the_job_log(setup):
+    from studio.jobs import ReconcileRequired
+    _client, service, jobs, project, _scenes, _main, _extra, request = setup
+    run = jobs.runs.create(project['id'], request([]))
+    jobs.runs.tick()
+    (job,) = active(service, run['id'])
+    try:
+        try:
+            raise ConnectionResetError('proxy closed the session')
+        except ConnectionResetError as cause:
+            raise ReconcileRequired('Kết nối gián đoạn') from cause
+    except ReconcileRequired as exc:
+        detail = jobs.technical_detail(exc)
+    assert detail.startswith('Chi tiết kỹ thuật: ReconcileRequired: Kết nối gián đoạn') and 'ConnectionResetError: proxy closed the session' in detail
+    jobs.event(job.id, detail, level='warning')
+    from studio.models import JobEvent
+    with service.sessions() as session:
+        assert any(e.message == detail for e in session.query(JobEvent).filter_by(job_id=job.id))

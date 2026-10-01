@@ -65,6 +65,15 @@ def _sentences(text, count):
     parts = [p.strip() for p in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if p.strip()]
     if count <= 1 or not parts:
         return [(text or '').strip()] * count
+    # Fewer sentences than shots: cut the longest sentence at a comma so no two shots show the same words.
+    while len(parts) < count:
+        cuttable = [(len(part), at) for at, part in enumerate(parts) if re.search(r'[,;]\s', part)]
+        if not cuttable:
+            break
+        at = max(cuttable)[1]
+        part = parts[at]
+        cut = min((m.end() for m in re.finditer(r'[,;]\s', part)), key=lambda c: abs(c - len(part) / 2))
+        parts[at:at + 1] = [part[:cut].strip(), part[cut:].strip()]
     target = sum(len(p) for p in parts) / count
     groups, current, size = [], [], 0
     for part in parts:

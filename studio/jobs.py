@@ -883,6 +883,15 @@ class StudioJobs:
         finally:
             self.active.pop(job.id, None)
 
+    @staticmethod
+    def technical_detail(exc):
+        """Why contact was lost, for the job log: exception types and a short message, never request bodies."""
+        chain, seen = [], exc
+        while seen is not None and len(chain) < 4:
+            chain.append(f"{type(seen).__name__}: {str(seen)[:200]}".rstrip(': '))
+            seen = seen.__cause__ or seen.__context__
+        return 'Chi tiết kỹ thuật: ' + ' ← '.join(chain)
+
     async def _run_and_record(self, job):
         try:
             await self.execute(job)
@@ -899,11 +908,13 @@ class StudioJobs:
         except ReconcileRequired as exc:
             message = str(exc) if job.kind in {'speech', 'image_review'} else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
             self.patch(job.id, status="reconciling", error=message)
+            self.event(job.id, self.technical_detail(exc), level='warning')
             if job.kind in {'install', 'verify'}:
                 self.installations.patch(job.host_id, 'interrupted')
         except (httpx.TransportError, asyncssh.Error, ConnectionError, TimeoutError):
             message = "Mất liên lạc khi tạo giọng đọc. Bấm Đối chiếu để kiểm tra file hoặc tiến trình còn trên GPU; không tạo lượt mới." if job.kind == "speech" else "Mất liên lạc hoặc trạng thái chưa rõ. Tiếp tục để đối chiếu prompt đã gửi, không render lại."
             self.patch(job.id, status="reconciling", error=message)
+            self.event(job.id, self.technical_detail(exc), level='warning')
             if job.kind in {'install', 'verify'}:
                 self.installations.patch(job.host_id, 'interrupted')
         except Exception as exc:  # noqa: BLE001 -- one failed job must not kill the durable worker
@@ -1363,7 +1374,7 @@ class StudioJobs:
                     from studio.storyboard import prompt_suffix
                     shot_prompt = prompt + '\n' + prompt_suffix(scene['shot_list'][index], project.get('aspect_ratio') == '9:16')
                 if context:
-                    shot_prompt += '\nHistorical setting (background and costume reference only; the scene above decides what is shown): ' + context
+                    shot_prompt += '\nHistorical setting and how people look (the scene above decides what happens; follow this for hair, clothing and surroundings): ' + context
                 # Each scene starts from its own noise: with one shared seed every scene's shot N began identical.
                 image_seed = scene['seed'] + 7919 * int(scene.get('position') or 0) + (index if count > 1 else 0)
                 started = time.monotonic()
