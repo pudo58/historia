@@ -275,6 +275,10 @@ def router(service, jobs, host_lock):
     def update_scene(id: str, payload: SceneUpdate):
         return service.update_scene(id, payload)
 
+    @api.post("/projects/{id}/auto-storyboard")
+    def auto_storyboard(id: str):
+        return service.auto_storyboard(id)
+
     @api.post("/scenes/{id}/approve")
     def approve(id: str, payload: Approval):
         return service.approve(id, payload.revision, payload.target, payload.approved)

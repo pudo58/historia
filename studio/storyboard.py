@@ -46,3 +46,48 @@ def warnings(shots, strategy):
     if shots:
         result.append('Kiểm tra chỉ dẫn, không chứng minh video liên tục hoặc hoàn hảo; cần duyệt hình thực tế.')
     return result
+
+
+# Editing rhythm for an automatic storyboard: establish, move in, find a telling detail, step back out.
+_RHYTHM = [
+    ('wide', 'eye', 'slow_push', 'Establishing view that shows the whole setting and everyone in it.'),
+    ('medium', 'eye', 'gentle_slide', 'Medium shot on the main figures, bodies and costumes readable, a different angle from the previous shot.'),
+    ('close', 'low', 'slow_push', 'Close view on a telling detail of the moment: faces, hands, a banner, a tool or the water.'),
+    ('medium', 'high', 'short_follow', 'Medium shot from a slightly higher angle following the action.'),
+]
+
+
+def _sentences(text, count):
+    """The narration cut into ``count`` consecutive pieces of about equal length (sentence boundaries first)."""
+    import re
+    parts = [p.strip() for p in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if p.strip()]
+    if count <= 1 or not parts:
+        return [(text or '').strip()] * count
+    target = sum(len(p) for p in parts) / count
+    groups, current, size = [], [], 0
+    for part in parts:
+        current.append(part)
+        size += len(part)
+        if size >= target * (len(groups) + 1) - sum(len(' '.join(g)) for g in groups) and len(groups) < count - 1:
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    texts = [' '.join(g) for g in groups]
+    while len(texts) < count:
+        texts.append(texts[-1])
+    return texts[:count]
+
+
+def auto_shots(scene, count):
+    """A varied shot list (size, angle, move) for ``count`` clips of a scene. Lighting, direction and
+    placement stay constant so the 180-degree/lighting warnings do not fire."""
+    excerpts = _sentences(scene.get('narration', ''), count)
+    shots = []
+    for index in range(count):
+        size, angle, move, composition = _RHYTHM[index % len(_RHYTHM)]
+        shots.append({'purpose': f'Shot {index + 1}/{count}: ' + composition.split('.')[0], 'subject': scene.get('title', ''),
+                      'action': '', 'shot_size': size, 'camera_angle': angle, 'placement': 'center',
+                      'direction': 'left-to-right', 'composition': composition, 'lighting': '',
+                      'camera_move': move, 'narration_excerpt': excerpts[index][:1000]})
+    return shots

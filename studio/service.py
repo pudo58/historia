@@ -259,6 +259,27 @@ class StudioService:
             session.commit()
         return self.read(row)
 
+    def auto_storyboard(self, project_id: str) -> dict:
+        """Give every scene with measured audio a varied multi-angle shot list and its own image per shot."""
+        from studio.media import probe, scene_clip_count
+        from studio.storyboard import auto_shots
+        done, skipped = [], []
+        for scene in self.project(project_id)['scenes']:
+            if scene.get('motion', 'wan') != 'wan' or not scene.get('speech_id'):
+                skipped.append(scene['title'])
+                continue
+            count = scene_clip_count(scene, probe(self.artifact_path(scene['speech_id']))['duration'])
+            if count < 2 or scene.get('shot_list'):
+                skipped.append(scene['title'])
+                continue
+            fields = {k: v for k, v in scene.items() if k in SceneInput.model_fields}
+            update = SceneUpdate.model_validate({**fields, 'revision': scene['revision'],
+                                                 'shot_list': auto_shots(scene, count), 'image_strategy': 'per_shot',
+                                                 'video_profile': scene.get('video_profile') or 'fast'})
+            self.update_scene(scene['id'], update)
+            done.append(scene['title'])
+        return {'updated': done, 'skipped': skipped}
+
     def update_scene(self, scene_id: str, data: SceneUpdate) -> dict:
         old = self.require(Scene, scene_id)
         self.assert_idle(old.project_id)

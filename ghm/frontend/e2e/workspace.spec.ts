@@ -448,3 +448,15 @@ test('dynasty knowledge: the project offers packs and the editor saves the edite
   await expect(page.getByText(/Đã lưu/)).toBeVisible();
   expect((saved as {visual:string}).visual).toBe('Edited look.');
 });
+
+
+test('auto storyboard: one button splits scenes that have measured audio into varied shots',async({page})=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project.scenes[0],{speech_id:'a1',shot_list:[],motion:'wan'});
+  let called=false;
+  await page.route('**/api/studio/projects/p/auto-storyboard',route=>{called=true;return route.fulfill({status:200,json:{updated:['Cảnh 1'],skipped:[]}});});
+  await page.goto('/?page=projects&project=p&tab=video');
+  await page.getByRole('button',{name:/Chia góc cho 1 cảnh/}).click();
+  await expect(page.getByText(/Đã lập shot list nhiều góc cho 1 cảnh/)).toBeVisible();
+  expect(called).toBe(true);
+});

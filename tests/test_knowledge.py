@@ -78,3 +78,34 @@ def test_rich_pack_is_slim_in_projects_and_facts_are_retrieved_by_relevance(tmp_
     saved = knowledge.save(tmp_path, {k: full[k] for k in ('id', 'name', 'period', 'script', 'visual', 'roles')})
     assert sum(len(v) for v in knowledge.load(tmp_path, 'tran')['facts'].values()) == sum(len(v) for v in full['facts'].values())
     assert saved['id'] == 'tran'
+
+
+def test_auto_storyboard_gives_varied_shots_to_scenes_with_measured_audio(tmp_path, monkeypatch):
+    from studio.models import Scene
+    from studio.schemas import SceneInput
+    from studio.storyboard import auto_shots
+    client, service = app(tmp_path)
+    project = service.create_project(ProjectInput(title='P', topic='t'))
+    long_scene = service.add_scene(project['id'], SceneInput(title='Long', narration='Câu một. Câu hai dài hơn một chút. Câu ba. Câu bốn.', visual_prompt='A river'))
+    short_scene = service.add_scene(project['id'], SceneInput(title='Short', narration='Một câu.', visual_prompt='A hall'))
+    service.add_scene(project['id'], SceneInput(title='No audio', narration='Chưa có tiếng.', visual_prompt='A gate'))
+    for scene, seconds in ((long_scene, 14.0), (short_scene, 3.0)):
+        wav = service.root / f"{scene['id']}.wav"
+        wav.write_bytes(b'x')
+        artifact = service.artifact(wav, project['id'], wav.name, None)['id']
+        with service.sessions() as session:
+            row = session.get(Scene, scene['id'])
+            row.data = {**row.data, 'speech_id': artifact, 'duration': seconds}
+            session.commit()
+    sizes = {long_scene['id']: 14.0, short_scene['id']: 3.0}
+    monkeypatch.setattr('studio.media.probe', lambda path: {'duration': next(v for k, v in sizes.items() if k in str(path))})
+    result = client.post(f"/api/studio/projects/{project['id']}/auto-storyboard")
+    assert result.status_code == 200, result.text
+    assert result.json()['updated'] == ['Long'] and set(result.json()['skipped']) == {'Short', 'No audio'}
+    long_data = next(s for s in service.project(project['id'])['scenes'] if s['title'] == 'Long')
+    shots = long_data['shot_list']
+    assert len(shots) == 3 and long_data['image_strategy'] == 'per_shot'
+    assert [s['shot_size'] for s in shots] == ['wide', 'medium', 'close']
+    assert {s['direction'] for s in shots} == {'left-to-right'}
+    assert client.post(f"/api/studio/projects/{project['id']}/auto-storyboard").json()['updated'] == []   # not redone
+    assert len(auto_shots({'title': 'T', 'narration': 'A. B.'}, 5)) == 5
