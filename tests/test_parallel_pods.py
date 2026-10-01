@@ -1,4 +1,4 @@
-"""Offline tests for rendering Wan clips of different scenes on several Pods at once."""
+"""Offline tests for rendering keyframes and Wan clips of different scenes on several Pods at once."""
 import asyncio
 
 import pytest
@@ -63,12 +63,14 @@ def active(service, run_id):
 
 
 def through_keyframes(service, jobs, run_id):
-    for _ in range(6):
+    for _ in range(12):
         jobs.runs.tick()
-        (job,) = active(service, run_id)
-        assert job.kind in {'speech', 'keyframe'}
-        complete(service, jobs, job.id)
-    jobs.runs.tick()
+        batch = active(service, run_id)
+        if batch[0].kind not in {'speech', 'keyframe'}:
+            return
+        for job in batch:
+            complete(service, jobs, job.id)
+    raise AssertionError('keyframes never finished')
 
 
 def test_clips_fan_out_across_pods_and_export_waits(setup):
@@ -219,3 +221,44 @@ def test_worker_runs_one_job_per_host_concurrently(setup, monkeypatch):
         await asyncio.gather(*jobs.active.values())
     asyncio.run(scenario())
     assert {service.require(Job, id).status for id in ids} == {'completed'}
+
+
+def test_keyframes_fan_out_across_pods_and_wait_for_images_before_clips(setup):
+    _client, service, jobs, project, scenes, main, extra, request = setup
+    run = jobs.runs.create(project['id'], request([extra]))
+    for _ in range(3):  # speech stays one job at a time on the main Pod
+        jobs.runs.tick()
+        (speech,) = active(service, run['id'])
+        assert speech.kind == 'speech' and speech.host_id == main
+        complete(service, jobs, speech.id)
+    jobs.runs.tick()
+    first = active(service, run['id'])
+    assert [j.kind for j in first] == ['keyframe', 'keyframe']
+    assert {j.host_id for j in first} == {main, extra}
+    assert [j.scene_id for j in first] == [scenes[0]['id'], scenes[1]['id']]
+    complete(service, jobs, first[1].id)
+    jobs.runs.tick()
+    second = active(service, run['id'])
+    assert second[1].scene_id == scenes[2]['id'] and second[1].host_id == first[1].host_id
+    complete(service, jobs, first[0].id)
+    jobs.runs.tick()
+    assert [j.kind for j in active(service, run['id'])] == ['keyframe']  # clips wait for every image
+    complete(service, jobs, second[1].id)
+    jobs.runs.tick()
+    assert {j.kind for j in active(service, run['id'])} == {'clip'}
+
+
+def test_an_extra_pod_without_image_models_is_not_given_keyframes(setup, monkeypatch):
+    _client, service, jobs, project, scenes, main, extra, request = setup
+    monkeypatch.setattr(jobs.installations, 'component_proven',
+                        lambda host_id, names: host_id == main or names == ['wan_i2v'])
+    run = jobs.runs.create(project['id'], request([extra]))
+    for _ in range(3):
+        jobs.runs.tick()
+        (speech,) = active(service, run['id'])
+        complete(service, jobs, speech.id)
+    for scene in scenes:
+        jobs.runs.tick()
+        (job,) = active(service, run['id'])
+        assert job.kind == 'keyframe' and job.host_id == main and job.scene_id == scene['id']
+        complete(service, jobs, job.id)

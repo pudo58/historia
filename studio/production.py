@@ -89,7 +89,7 @@ def review_waiting(checkpoint):
 
 
 def parallel_hosts(run):
-    """Extra Pods that may render Wan clips of this run at the same time as the main Pod."""
+    """Extra Pods that may render keyframes and Wan clips of this run at the same time as the main Pod."""
     return [h for h in (run.consent or {}).get('parallel_host_ids') or [] if h != run.snapshot.get('host_id')]
 
 
@@ -177,8 +177,6 @@ class ProductionRuns:
             parallel = list(dict.fromkeys(request.parallel_host_ids))
             if host_id in parallel:
                 raise ValueError('Pod chính của dự án đã được dùng; chỉ chọn thêm Pod khác để chạy song song.')
-            if parallel and 'wan_i2v' not in needed:
-                raise ValueError('Chạy song song chỉ tăng tốc cảnh Wan; dự án không có cảnh Wan nào.')
             for extra in parallel:
                 host = self.jobs.hosts._require_host(extra)
                 if not host.pinned_fingerprint:
@@ -492,11 +490,17 @@ class ProductionRuns:
                     refreshed = (cp.get('knowledge_by_scene') or {}).get(scene['id']) if scene else None
                     scene_project = {**project, 'knowledge': refreshed} if refreshed else project
                     local_clip = kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan'
-                    if kind != 'clip' and dispatched:
+                    fan_out = kind in {'clip', 'keyframe'}
+                    if not fan_out and dispatched:
                         pending = True
                         break
-                    if kind == 'clip':
-                        lane = None if local_clip else next((h for h in hosts if h not in used), False)
+                    if fan_out:
+                        usable = hosts
+                        if kind == 'keyframe':
+                            # The main Pod always qualifies; an extra Pod needs the image models proven on it.
+                            usable = [h for h in hosts if h == project.get('host_id') or self.jobs.installations.component_proven(
+                                h, ['qwen_image', *(['qwen_edit'] if scene.get('reference_ids') or scene.get('character_ids') else [])])]
+                        lane = None if local_clip else next((h for h in usable if h not in used), False)
                         if lane is False or (local_clip and None in used):
                             pending = True
                             continue
@@ -511,14 +515,14 @@ class ProductionRuns:
                                 raise ValueError('Clip chưa đủ thời lượng lời đọc; không kéo chậm/lặp clip.')
                     workflows = {name: canonical_hash(load_graph(name)) for name in ('qwen_image', 'qwen_edit', 'wan_i2v', 'rife_post')}
                     workflow = {} if kind in {'speech', 'export'} or (kind in {'clip', 'rife'} and scene.get('motion', 'wan') != 'wan') else ({'wan_i2v': workflows['wan_i2v']} if kind == 'clip' else {'rife_post': workflows['rife_post']} if kind == 'rife' else {k: v for k, v in workflows.items() if k in {'qwen_image', 'qwen_edit'}})
-                    clip_host = None if local_clip else lane if kind == 'clip' else project.get('host_id')
+                    clip_host = None if local_clip else lane if kind in {'clip', 'keyframe'} else project.get('host_id')
                     identity = {'production_version': 1, 'kind': kind, 'project_id': run.project_id,
                         'scene_id': scene['id'] if scene else None,
                         'inputs': dependency_identity(scene_project, scene, kind), 'workflow': workflow}
                     hashed = canonical_hash({**identity, 'host': clip_host if kind != 'export' else None})
-                    # A clip already finished on any Pod of this run is reused, not re-rendered.
+                    # A keyframe or clip already finished on any Pod of this run is reused, not re-rendered.
                     candidates = [hashed, *(canonical_hash({**identity, 'host': h}) for h in hosts
-                                            if kind == 'clip' and not local_clip and h != clip_host)]
+                                            if kind in {'clip', 'keyframe'} and not local_clip and h != clip_host)]
                     existing = session.scalar(select(Job).where(Job.input_hash.in_(candidates), Job.status == 'completed').order_by(Job.created_at.desc()))
                     from studio.generation import clip_output_matches
                     if existing and kind == 'clip' and not clip_output_matches(existing, project, scene):
@@ -560,7 +564,7 @@ class ProductionRuns:
                     pending = True
                     if job.status != 'completed':
                         used.add(job.host_id)
-                    if kind != 'clip':
+                    if kind not in {'clip', 'keyframe'}:
                         break
                 if pending:
                     break
