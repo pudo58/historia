@@ -162,3 +162,69 @@ def test_http_refused_loopback_port_is_a_connect_error_not_a_lost_connection():
             with pytest.raises(ConnectionError):
                 await client.get('http://127.0.0.1:8190/system_stats')
     asyncio.run(check())
+
+
+class ClosingProcess(Process):
+    """A shell that prints something and hangs up before the agent says READY."""
+    def write(self, text):
+        if self.boot is None:
+            self.boot = text
+            self.nonce = text.strip().split()[-1]
+            self.lines.put_nowait('bash: fork: retry: Resource temporarily unavailable\n')
+            self.lines.put_nowait('echo ' + self.nonce + ' python3 -u -c ' + 'x'*500 + '\n')
+            self.lines.put_nowait('')
+            return
+        super().write(text)
+
+
+def test_handshake_hang_up_is_retried_then_reports_what_the_pod_printed(monkeypatch):
+    monkeypatch.setattr(terminal, 'HANDSHAKE_RETRY_DELAYS', (0, 0))
+    async def check():
+        e = Executor([])
+        opened = []
+        async def create_process(**kwargs):
+            opened.append(1)
+            e.process = ClosingProcess([])
+            return e.process
+        e.create_process = create_process
+        with pytest.raises(ConnectionError) as caught:
+            await terminal.run(e, 'anything', 5)
+        text = str(caught.value)
+        assert len(opened) == 3 and 'đã thử 3 lần' in text
+        assert 'Resource temporarily unavailable' in text and 'xxxx' not in text
+        assert e.process.closed
+    asyncio.run(check())
+
+
+def test_handshake_succeeds_on_a_later_attempt_without_repeating_the_command(monkeypatch):
+    monkeypatch.setattr(terminal, 'HANDSHAKE_RETRY_DELAYS', (0, 0))
+    async def check():
+        e = Executor([('DATA', b'ok'), ('EXIT', b'0')])
+        made = []
+        async def create_process(**kwargs):
+            made.append(ClosingProcess([]) if not made else Process([('DATA', b'ok'), ('EXIT', b'0')]))
+            e.process = made[-1]
+            return e.process
+        e.create_process = create_process
+        result = await terminal.run(e, 'echo ok', 5)
+        assert result.rc == 0 and result.stdout == 'ok' and len(made) == 2
+        assert made[0].payload is None and made[0].closed   # the failed session never received the request
+        assert made[1].payload['command'] == 'echo ok'
+    asyncio.run(check())
+
+
+def test_sessions_to_one_proxy_login_are_opened_one_at_a_time():
+    async def check():
+        active = peak = 0
+        class Slow(Executor):
+            host, port, username = 'ssh.runpod.io', 22, 'pod-abc'
+            async def create_process(self, **kwargs):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                await asyncio.sleep(0.02)
+                active -= 1
+                return Process([('DATA', b'x'), ('EXIT', b'0')])
+        results = await asyncio.gather(*(terminal.run(Slow([]), 'true', 5) for _ in range(5)))
+        assert [r.rc for r in results] == [0]*5 and peak == 1
+    asyncio.run(check())

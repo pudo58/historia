@@ -888,7 +888,7 @@ class StudioJobs:
         """Why contact was lost, for the job log: exception types and a short message, never request bodies."""
         chain, seen = [], exc
         while seen is not None and len(chain) < 4:
-            chain.append(f"{type(seen).__name__}: {str(seen)[:200]}".rstrip(': '))
+            chain.append(f"{type(seen).__name__}: {str(seen)[:400]}".rstrip(': '))
             seen = seen.__cause__ or seen.__context__
         return 'Chi tiết kỹ thuật: ' + ' ← '.join(chain)
 

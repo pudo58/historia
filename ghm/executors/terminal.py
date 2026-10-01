@@ -3,15 +3,85 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import shlex
+import weakref
 import zlib
 from pathlib import Path
 from uuid import uuid4
 
+import asyncssh
 import httpx
 
 from ghm.executors.base import CommandResult
 from ghm.executors.terminal_agent import AGENT
+
+
+# Seconds to wait before re-opening a session whose shell closed before the agent said READY.
+# Nothing was sent to the Pod at that point, so repeating the handshake can never repeat a command.
+HANDSHAKE_RETRY_DELAYS = (2.0, 5.0)
+_gates = weakref.WeakKeyDictionary()
+
+
+class HandshakeClosed(ConnectionError):
+    """The shell closed before the terminal agent was ready (nothing was executed)."""
+
+
+def _gate(executor):
+    """One handshake at a time per proxy login: many lanes share ssh.runpod.io and a burst of PTYs gets refused."""
+    key = (getattr(executor, 'host', None), getattr(executor, 'port', None), getattr(executor, 'username', None))
+    return _gates.setdefault(asyncio.get_running_loop(), {}).setdefault(key, asyncio.Lock())
+
+
+def _what_the_pod_said(banner, nonce):
+    """The last readable lines the remote shell printed, without the echoed bootstrap command."""
+    lines = [re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', line).strip() for line in banner.splitlines()]
+    lines = [line for line in lines if line and nonce not in line and len(line) < 300]
+    return ' | '.join(lines)[-300:]
+
+
+async def _close(process):
+    process.close()
+    try:
+        await asyncio.wait_for(process.wait_closed(), 6)
+    except TimeoutError:
+        pass
+
+
+async def _open(executor, command, nonce):
+    """Start the agent and wait for its READY line, retrying only while nothing has been sent."""
+    attempts = len(HANDSHAKE_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        process = None
+        try:
+            async with _gate(executor):
+                connection = await executor.connection()
+                process = await connection.create_process(term_type='dumb', term_size=(160, 24))
+                process.stdin.write(command)
+                banner = ''
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        said = _what_the_pod_said(banner, nonce)
+                        raise HandshakeClosed(
+                            'SSH đóng trước khi terminal sẵn sàng'
+                            + (' (đã thử %d lần)' % attempts if attempts > 1 else '')
+                            + ('. Pod in ra: ' + said if said else '. Pod không in gì (shell hoặc python3 không khởi động được).'))
+                    banner += line
+                    if line.strip() == nonce + ':READY':
+                        return process
+                    if len(banner) > 100_000:
+                        raise ConnectionError('Không bắt tay được terminal RPC.')
+        except (HandshakeClosed, asyncssh.ChannelOpenError, asyncssh.ConnectionLost):
+            if process is not None:
+                await _close(process)
+            if attempt == attempts - 1:
+                raise
+            await asyncio.sleep(HANDSHAKE_RETRY_DELAYS[attempt])
+        except BaseException:
+            if process is not None:
+                await _close(process)
+            raise
 
 
 async def rpc(executor, payload, timeout=60):
@@ -27,19 +97,7 @@ async def rpc(executor, payload, timeout=60):
     process = None
     try:
         async with asyncio.timeout(timeout):
-            connection = await executor.connection()
-            process = await connection.create_process(term_type='dumb', term_size=(160, 24))
-            process.stdin.write(command)
-            banner = ''
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    raise ConnectionError('SSH đóng trước khi terminal sẵn sàng.')
-                banner += line
-                if line.strip() == nonce + ':READY':
-                    break
-                if len(banner) > 100_000:
-                    raise ConnectionError('Không bắt tay được terminal RPC.')
+            process = await _open(executor, command, nonce)
             # The remote tty is now raw with echo disabled. Never log this payload.
             for offset in range(0, len(request), 32768):
                 process.stdin.write(request[offset:offset+32768].decode('ascii'))
