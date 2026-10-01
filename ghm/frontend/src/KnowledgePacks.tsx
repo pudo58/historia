@@ -5,7 +5,31 @@ import {Field} from './ui';
 
 type Role={name:string;keywords:string[];text:string};
 type Pack={id:string;name:string;period:string;status:string;script:string;visual:string;roles:Role[];avoid:string;
-  sources:{claim:string;ref:string}[];builtin?:boolean;version?:string};
+  sources:{claim:string;ref:string}[];builtin?:boolean;version?:string;facts?:Facts;fact_counts?:Record<string,number>};
+type Fact={title:string;text:string;ref?:string;year?:number|string|null};
+type Facts=Record<string,Fact[]>;
+const FACT_LABELS:Record<string,string>={events:'Sự kiện',people:'Nhân vật',titles_offices:'Chức quan, danh hiệu',places:'Địa danh',
+  dress_appearance:'Trang phục, diện mạo',architecture_objects:'Kiến trúc, vật dụng',customs_institutions:'Phong tục, chế độ'};
+
+function FactBrowser({facts}:{facts:Facts}){
+  const keys=Object.keys(facts);
+  const [kind,setKind]=useState(keys.includes('dress_appearance')?'dress_appearance':keys[0]||'');
+  const [text,setText]=useState('');
+  const needle=text.trim().toLowerCase();
+  const all=facts[kind]||[];
+  const shown=needle?all.filter(f=>`${f.title} ${f.text} ${f.year??''}`.toLowerCase().includes(needle)):all;
+  const total=keys.reduce((n,k)=>n+facts[k].length,0);
+  return <details className="fact-browser"><summary>Tư liệu trích từ sách ({total} mục)</summary>
+    <p><small>Chỉ đọc. Khi viết kịch bản, hệ thống tự chọn các mục liên quan đến chủ đề/chương để đưa cho mô hình; trang phục luôn được ưu tiên.</small></p>
+    <div className="form-grid">
+      <Field label="Nhóm"><select value={kind} onChange={e=>setKind(e.target.value)}>{keys.map(k=><option key={k} value={k}>{FACT_LABELS[k]||k} ({facts[k].length})</option>)}</select></Field>
+      <Field label="Tìm trong nhóm"><input value={text} onChange={e=>setText(e.target.value)} placeholder="vd: mũ, áo, 1288, Hưng Đạo"/></Field>
+    </div>
+    <p role="status">{shown.length} / {all.length} mục</p>
+    <ul>{shown.slice(0,60).map((f,i)=><li key={i}><strong>{f.title}</strong>{f.year?` [${f.year}]`:''}: {f.text}{f.ref&&<em> — {f.ref}</em>}</li>)}</ul>
+    {shown.length>60&&<p><small>Hiện 60 mục đầu; gõ từ khóa để thu hẹp.</small></p>}
+  </details>;
+}
 type Listing={id:string;name:string;period:string;builtin:boolean;status:string;version:string};
 
 export function KnowledgeSelect({value}:{value?:string}){
@@ -46,7 +70,7 @@ export function KnowledgeEditor({packId}:{packId?:string}){
   return <details className="panel knowledge-editor"><summary>Gói tri thức: {pack.name} · {pack.period}</summary>
     <p className="alert notice">{pack.status||'Chưa có ghi chú trạng thái.'} {pack.builtin?'(Bản có sẵn; lưu sẽ tạo bản riêng của bạn.)':'(Bản riêng của bạn.)'}</p>
     <Field label="Ghi chú trạng thái / mức chắc chắn"><input value={pack.status} maxLength={200} onChange={e=>set({status:e.target.value})}/></Field>
-    <Field label="Kiến thức cho người viết kịch bản (tiếng Việt: tên gọi, xưng hô, chức quan, phong tục)"><textarea rows={12} maxLength={8000} value={pack.script} onChange={e=>set({script:e.target.value})}/></Field>
+    <Field label="Kiến thức cho người viết kịch bản (tiếng Việt: tên gọi, xưng hô, chức quan, phong tục)"><textarea rows={12} maxLength={12000} value={pack.script} onChange={e=>set({script:e.target.value})}/></Field>
     <Field label="Hình ảnh chung của thời kỳ (tiếng Anh, vào mọi prompt ảnh)"><textarea rows={4} maxLength={1200} value={pack.visual} onChange={e=>set({visual:e.target.value})}/></Field>
     <h3>Theo vai · chỉ thêm vào prompt khi cảnh nhắc đến vai đó</h3>
     {pack.roles.map((r,i)=><fieldset key={i} className="form-grid"><legend>{r.name||`Vai ${i+1}`}</legend>
@@ -56,6 +80,7 @@ export function KnowledgeEditor({packId}:{packId?:string}){
       <button type="button" onClick={()=>set({roles:pack.roles.filter((_,n)=>n!==i)})}>Bỏ vai này</button></fieldset>)}
     <button type="button" onClick={()=>set({roles:[...pack.roles,{name:'',keywords:[],text:''}]})}>Thêm vai</button>
     <Field label="Cần tránh (tiếng Anh; dùng khi viết kịch bản và duyệt ảnh, không đưa vào prompt ảnh)"><textarea rows={3} maxLength={800} value={pack.avoid} onChange={e=>set({avoid:e.target.value})}/></Field>
+    {query.data?.facts&&<FactBrowser facts={query.data.facts}/>}
     <details><summary>Nguồn của từng chi tiết ({pack.sources.length})</summary>
       <ul>{pack.sources.map((s,i)=><li key={i}>{s.claim} <em>— {s.ref}</em></li>)}</ul></details>
     <div className="actions"><button className="primary" onClick={()=>void save()}>Lưu gói tri thức</button></div>

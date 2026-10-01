@@ -96,7 +96,7 @@ class StudioService:
             result["characters"] = [self.read(row) for row in session.scalars(select(Character).where(Character.project_id == id))]
             result["scenes"] = [self.read(row) for row in session.scalars(select(Scene).where(Scene.project_id == id).order_by(Scene.position))]
         from studio import knowledge
-        result["knowledge"] = knowledge.load(self.root, result.get("knowledge_id", ""))
+        result["knowledge"] = knowledge.load(self.root, result.get("knowledge_id", ""), slim=True)
         return result
 
     def update_project(self, id: str, data: ProjectInput) -> dict:

@@ -384,7 +384,8 @@ def router(service, jobs, host_lock):
         from studio import knowledge
         if payload.id != pack_id:
             raise ValueError('Mã gói không khớp đường dẫn.')
-        return knowledge.save(service.root, payload.model_dump())
+        saved = knowledge.save(service.root, payload.model_dump())
+        return knowledge.load(service.root, saved['id'], slim=True)
 
     @api.get("/jobs/{id}/events")
     def events(id: str, after: int = Query(default=0, ge=0), tail: bool = False):

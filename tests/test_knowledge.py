@@ -53,7 +53,28 @@ def test_api_lists_edits_and_a_project_carries_its_pack(tmp_path):
 
 
 def test_writer_instruction_names_the_rules_and_is_empty_without_a_pack(tmp_path):
-    pack = knowledge.load(tmp_path, 'tran')
-    text = StudioJobs.knowledge_instruction({'knowledge': pack})
+    from types import SimpleNamespace
+    me = SimpleNamespace(service=SimpleNamespace(root=tmp_path))
+    text = StudioJobs.knowledge_instruction(me, {'knowledge': {'id': 'tran'}, 'topic': 'Trần Hưng Đạo'})
     assert 'Quan gia' in text and 'visual_bible' in text and 'Forbidden City' in text
-    assert StudioJobs.knowledge_instruction({'knowledge': None}) == ''
+    assert StudioJobs.knowledge_instruction(me, {'knowledge': None}) == ''
+
+
+def test_rich_pack_is_slim_in_projects_and_facts_are_retrieved_by_relevance(tmp_path):
+    full = knowledge.load(tmp_path, 'tran')
+    slim = knowledge.load(tmp_path, 'tran', slim=True)
+    assert 'facts' not in slim and slim['version'] == full['version']
+    assert sum(slim['fact_counts'].values()) == sum(len(v) for v in full['facts'].values()) > 500
+    synthetic = {'name': 'X', 'facts': {
+        'events': [{'title': 'Hội nghị Diên Hồng', 'text': 'Vua hỏi các bô lão nên hòa hay đánh', 'ref': 'q.V', 'year': 1284},
+                   {'title': 'Lập Quốc tử viện', 'text': 'Dạy con quan học', 'ref': 'q.V', 'year': 1253}],
+        'dress_appearance': [{'title': 'Áo', 'text': 'Áo bào đỏ', 'ref': 'q.VI', 'year': 1300}]}}
+    picked = knowledge.relevant_facts(synthetic, 'Hội nghị Diên Hồng năm 1284')
+    assert picked['su_kien'][0].startswith('Hội nghị Diên Hồng') and 'trang_phuc_dung_mao' in picked
+    brief = knowledge.for_writer(synthetic and {**synthetic, 'name': 'X'}, 'Diên Hồng')
+    assert 'tu_lieu_sach' in brief
+    assert len(str(knowledge.for_writer(full, 'Trần Hưng Đạo kháng chiến chống Nguyên Mông'))) < 30000
+    # saving from the editor (no facts in the body) keeps the fact base
+    saved = knowledge.save(tmp_path, {k: full[k] for k in ('id', 'name', 'period', 'script', 'visual', 'roles')})
+    assert sum(len(v) for v in knowledge.load(tmp_path, 'tran')['facts'].values()) == sum(len(v) for v in full['facts'].values())
+    assert saved['id'] == 'tran'

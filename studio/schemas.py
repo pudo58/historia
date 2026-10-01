@@ -227,7 +227,7 @@ class KnowledgePackInput(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     period: str = Field(default='', max_length=120)
     status: str = Field(default='', max_length=200)
-    script: str = Field(default='', max_length=8000)
+    script: str = Field(default='', max_length=12000)
     visual: str = Field(default='', max_length=1200)
     roles: list[KnowledgeRole] = Field(default_factory=list, max_length=20)
     avoid: str = Field(default='', max_length=800)

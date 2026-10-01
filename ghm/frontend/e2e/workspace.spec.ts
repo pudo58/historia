@@ -429,7 +429,8 @@ test('dynasty knowledge: the project offers packs and the editor saves the edite
   const state=await fixture(page,'completed');
   Object.assign(state.project,{knowledge_id:'tran'});
   const pack={id:'tran',name:'Nhà Trần',period:'1225–1400',status:'Bản nháp',script:'Quan gia',visual:'Tran look.',avoid:'Qing robe',
-    roles:[{name:'Vua',keywords:['king'],text:'Yellow robe.'}],sources:[{claim:'Mũ chữ đinh',ref:'Toàn thư, Q.VI'}],builtin:true,version:'abc'};
+    roles:[{name:'Vua',keywords:['king'],text:'Yellow robe.'}],sources:[{claim:'Mũ chữ đinh',ref:'Toàn thư, Q.VI'}],builtin:true,version:'abc',
+    facts:{dress_appearance:[{title:'Mũ',text:'Mũ chữ đinh',ref:'Q.VI',year:1262}],events:[{title:'Diên Hồng',text:'Hội nghị',ref:'Q.V',year:1284}]}};
   let saved:unknown=null;
   await page.route('**/api/studio/knowledge',route=>route.fulfill({json:[{id:'tran',name:'Nhà Trần',period:'1225–1400',builtin:true,status:'',version:'abc'}]}));
   await page.route('**/api/studio/knowledge/tran',route=>{
@@ -438,6 +439,10 @@ test('dynasty knowledge: the project offers packs and the editor saves the edite
   await page.goto('/?page=projects&project=p&tab=idea');
   await expect(page.getByLabel('Gói tri thức triều đại')).toHaveValue('tran');
   await page.getByText(/Gói tri thức: Nhà Trần/).click();
+  await page.getByText(/Tư liệu trích từ sách \(2 mục\)/).click();
+  await expect(page.getByText(/Mũ chữ đinh/).first()).toBeVisible();
+  await page.getByLabel('Tìm trong nhóm').fill('zzz');
+  await expect(page.getByText('0 / 1 mục')).toBeVisible();
   await page.getByLabel(/Hình ảnh chung của thời kỳ/).fill('Edited look.');
   await page.getByRole('button',{name:'Lưu gói tri thức'}).click();
   await expect(page.getByText(/Đã lưu/)).toBeVisible();
