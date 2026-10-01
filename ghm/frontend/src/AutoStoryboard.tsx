@@ -8,6 +8,8 @@ export default function AutoStoryboard({project:p}:{project:Project}){
   const [message,setMessage]=useState('');
   const [error,setError]=useState('');
   const ready=p.scenes.filter(s=>s.speech_id&&!s.shot_list?.length&&(s.motion||'wan')==='wan').length;
+  const split=p.scenes.filter(s=>s.shot_list?.length);
+  const shots=split.reduce((total,s)=>total+(s.shot_list?.length||0),0);
   async function run(){
     setBusy(true);setError('');setMessage('');
     try{
@@ -19,8 +21,9 @@ export default function AutoStoryboard({project:p}:{project:Project}){
   return <section className="panel" aria-label="Chia góc máy tự động">
     <h2>Chia góc máy tự động</h2>
     <p>Cảnh dài hơn một clip hiện chạy lại từ <strong>cùng một khung ảnh</strong> nên bị giật và lặp. Nút này chia mỗi cảnh thành nhiều shot theo nhịp toàn cảnh → trung cảnh → cận chi tiết, mỗi shot có ảnh riêng. Chạy sau khi đã tạo lời đọc; không tốn GPU, nhưng ảnh từng shot sẽ cần duyệt và tạo thêm.</p>
-    <button className="primary" disabled={busy||!ready} onClick={()=>void run()}>{busy?'Đang chia…':`Chia góc cho ${ready} cảnh đã có lời đọc`}</button>
-    {!ready&&<p role="status"><small>Chưa có cảnh nào đủ điều kiện: cần lời đọc đã tạo và cảnh chưa có shot list.</small></p>}
+    {(ready>0||!split.length)&&<button className="primary" disabled={busy||!ready} onClick={()=>void run()}>{busy?'Đang chia…':`Chia góc cho ${ready} cảnh đã có lời đọc`}</button>}
+    {!ready&&!split.length&&<p role="status"><small>Chưa có cảnh nào đủ điều kiện: cần lời đọc đã tạo và cảnh chưa có shot list.</small></p>}
+    {!ready&&split.length>0&&<p role="status" className="alert notice"><strong>Đã chia góc xong: {split.length} cảnh, {shots} shot.</strong> Không có cảnh nào cần chia thêm. Bước tiếp theo: tạo và duyệt ảnh từng shot.</p>}
     {message&&<p role="status">{message}</p>}{error&&<p role="alert" className="alert error">{error}</p>}
   </section>;
 }

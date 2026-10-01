@@ -462,6 +462,15 @@ test('auto storyboard: one button splits scenes that have measured audio into va
 });
 
 
+test('auto storyboard: when every scene is already split it says so instead of showing a dead button',async({page})=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project.scenes[0],{speech_id:'a1',motion:'wan',shot_list:[{id:'s1'},{id:'s2'},{id:'s3'}]});
+  await page.goto('/?page=projects&project=p&tab=video');
+  await expect(page.getByText(/Đã chia góc xong: 1 cảnh, 3 shot/)).toBeVisible();
+  await expect(page.getByRole('button',{name:/Chia góc cho/})).toHaveCount(0);
+});
+
+
 test('pod group: GPUs of one Pod are grouped and installed with one button, skipping GPUs already installed',async({page})=>{
   const calls:string[]=[];
   const status:Record<string,string>={g0:'installed',g1:'not_installed',g2:'not_installed'};
