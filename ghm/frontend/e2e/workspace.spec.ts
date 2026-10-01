@@ -425,6 +425,24 @@ test('GPU page shows Vietnamese labels and translated backend errors',async({pag
   expect(state.errors).toEqual([]);
 });
 
+test('a fully linked Pod can add ComfyUI processes per GPU',async({page})=>{
+  await fixture(page);
+  const pod={id:'pod',name:'duo',status:'RUNNING',gpu:'RTX PRO 6000',gpu_count:2,gpu_count_known:true,vcpu:16,memory_gb:200,cost_per_hr:4.18,uptime_seconds:3600,session_cost:4,
+    host_label:'duo',host_id:'a',ssh_ready:true,linked_host_id:'a',host_ids:['a','b'],lanes:[{host_id:'a',label:'duo',index:0},{host_id:'b',label:'duo · GPU 1',index:1}]};
+  await page.route('**/api/runpod/pods',route=>route.fulfill({json:{configured:true,pods:[pod],running_count:1,running_cost_per_hr:4.18,ssh_key_path:'/k'}}));
+  await page.route('**/api/hosts',route=>route.fulfill({json:[]}));
+  const bodies:unknown[]=[];
+  await page.route('**/api/runpod/pods/pod/connect',route=>{bodies.push(route.request().postDataJSON());return route.fulfill({status:422,json:{detail:'GPU 96 GB VRAM chỉ đủ cho 3 tiến trình ComfyUI mỗi GPU.'}});});
+  await page.goto('/?page=gpu');
+  await expect(page.getByRole('button',{name:/Thêm tiến trình/})).toHaveCount(0);
+  await page.getByLabel('Số tiến trình ComfyUI mỗi GPU').selectOption('4');
+  const add=page.getByRole('button',{name:'Thêm tiến trình (đủ 8 máy)'});
+  await expect(add).toBeVisible();
+  await add.click();
+  await expect(page.getByText('chỉ đủ cho 3 tiến trình')).toBeVisible();
+  expect(bodies).toMatchObject([{all_gpus:true,per_gpu:4}]);
+});
+
 test('saved Hugging Face token is shown once and not asked again',async({page})=>{
   const state=await fixture(page);
   let configured=true;
