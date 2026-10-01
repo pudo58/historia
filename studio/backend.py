@@ -19,6 +19,14 @@ RIFE_OUTPUT_FPS = 48   # rife_post.json: 16 fps Wan clip x multiplier 3
 VIDEO_WORKFLOWS = {'wan_i2v', 'rife_post', 'wan_s2v'}
 
 
+
+def prompt_is_dead(prior, item, queued) -> bool:
+    """A submitted prompt that ComfyUI finished as failed/interrupted (not running, not queued, not successful)."""
+    if not prior or not item or queued or prior.get('state') not in {'submitting', 'submitted'}:
+        return False
+    status = item.get('status') or {}
+    return status.get('status_str') == 'error' and not status.get('completed')
+
 def comfy_failure_detail(status) -> str:
     """Node and exception ComfyUI itself recorded for a failed prompt (no paths, tokens or tracebacks)."""
     try:
@@ -225,6 +233,12 @@ print(json.dumps(data))
             queue = await client.get("/queue")
             queue.raise_for_status()
             queued = any(len(row) > 1 and row[1] == prompt_id for key in ["queue_running", "queue_pending"] for row in queue.json().get(key, []))
+            if prompt_is_dead(prior, item, queued):
+                # ComfyUI still lists the earlier prompt as failed/interrupted. Re-reading it would fail
+                # forever, and it is finished, so sending a fresh prompt cannot duplicate a render.
+                prompt_id = str(uuid5(UUID(job.id), f"{stage}#{prior.get('attempts', 1)}"))
+                log("Prompt trước đã dừng." + comfy_failure_detail(item.get('status', {}))[:240] + " Gửi prompt mới thay vì đọc lại kết quả cũ.")
+                item, queued, prior = None, False, None
             if not item and not queued and prior and prior.get('state') in {'remote_completed', 'downloaded'} and prior.get('output'):
                 item = {'status': {'status_str': 'success', 'completed': True},
                         'outputs': {'recovered': {'videos' if is_video else 'images': [prior['output']]}}}

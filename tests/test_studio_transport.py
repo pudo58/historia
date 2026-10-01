@@ -47,3 +47,16 @@ async def test_cancel_does_not_interrupt_someone_elses_job():
         await backend.cancel(job)
     assert ("POST", "/interrupt") not in requests
     assert ("POST", "/queue") in requests
+
+
+def test_failed_or_interrupted_prompt_is_replaced_not_reread():
+    from studio.backend import prompt_is_dead
+    failed = {'status': {'status_str': 'error', 'completed': False, 'messages': [['execution_interrupted', {}]]}}
+    assert prompt_is_dead({'state': 'submitted'}, failed, False)
+    assert prompt_is_dead({'state': 'submitting'}, failed, False)
+    # Never replace anything that may still be alive or that already succeeded.
+    assert not prompt_is_dead({'state': 'submitted'}, failed, True)
+    assert not prompt_is_dead({'state': 'submitted'}, None, False)
+    assert not prompt_is_dead(None, failed, False)
+    assert not prompt_is_dead({'state': 'submitted'}, {'status': {'status_str': 'success', 'completed': True}}, False)
+    assert not prompt_is_dead({'state': 'downloaded'}, failed, False)
