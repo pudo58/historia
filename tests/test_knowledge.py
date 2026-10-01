@@ -164,3 +164,26 @@ def test_inscriptions_are_chinese_characters_and_tattoos_follow_the_chronicle(tm
     assert 'dragon' in bare and 'bare skin' in bare
     titles = [f['title'] for f in knowledge.load(tmp_path, 'tran')['facts']['customs_institutions']]
     assert any('殺韃' in t for t in titles)
+
+
+def test_pack_reconciles_the_toan_thu_with_viet_nam_su_luoc_and_the_costume_study(tmp_path):
+    pack = knowledge.load(tmp_path, 'tran')
+    facts = pack['facts']
+    dress = {f['title']: f for f in facts['dress_appearance']}
+    assert 'Thượng hoàng Thái Tông' not in {f['title'] for f in facts['dress_appearance'] if f.get('year') == 1285}
+    assert 'Nhân Tông' in dress['Vua Nhân Tông']['title'] and 'Thái Tông đã mất từ 1277' in dress['Vua Nhân Tông']['text']
+    for title in ('Mũ chữ đinh: cấu tạo', 'Tóc nam giới thời Trần', 'Giày dép', 'Trang phục múa giá chi vũ (phù điêu chùa Hòa Long)'):
+        assert title in dress and dress[title]['ref']
+    refs = ' '.join(f['ref'] for cat in facts.values() for f in cat)
+    assert 'Việt Nam Sử Lược' in refs and 'daivietcophong' in refs
+    assert 'ĐỐI CHIẾU SỬ LIỆU' in pack['script'] and 'Sát Đát' in pack['script']
+    assert any('Hịch tướng sĩ' in f['title'] for f in facts['events'])
+    assert all(f.get('ref') for cat in facts.values() for f in cat)
+    # image-bound text stays positive and free of Latin transliterations of Vietnamese objects
+    image_text = ' '.join([pack['visual']] + [r['text'] for r in pack['roles']])
+    for latin in ('ao trang vat', 'thai long', 'mu co thao', 'Thien Truong', 'Ma Loi', 'non la'):
+        assert latin not in image_text
+    dance = knowledge.visual_for_scene(pack, {'visual_prompt': 'Court dancers perform for the envoys', 'narration': ''})
+    assert 'upturned brim' in dance
+    women = knowledge.visual_for_scene(pack, {'visual_prompt': 'The queen walks through the garden', 'narration': ''})
+    assert 'white lining' in women and 'bun' in women

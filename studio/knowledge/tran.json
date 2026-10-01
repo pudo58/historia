@@ -2,9 +2,9 @@
  "id": "tran",
  "name": "Nhà Trần",
  "period": "1225–1400",
- "status": "Bản nháp: ~1.500 mục trích tự động từ Đại Việt sử ký toàn thư (kỷ nhà Trần, Q.V–VIII), mỗi mục có quyển và năm. Có thể sót hoặc lệch năm; cần người kiểm sử duyệt trước khi dùng cho phim công bố.",
- "script": "TỔNG QUAN: Nhà Trần (1225–1400). Vua nhường ngôi sớm cho thái tử rồi làm Thái thượng hoàng, vẫn cùng nắm việc nước. Các đời vua theo sách: Thái Tông (từ 1225; nhường ngôi 1258), Thánh Tông (1258–), Nhân Tông (–1293), Anh Tông (1293–1313), Minh Tông (1313/14–1329), Hiến Tông (1329–1341), Dụ Tông (1341–1369), Dương Nhật Lễ (1369–70), Nghệ Tông (1370–), Duệ Tông (–1377), Phế Đế/Giản Hoàng (1377–1388), Thuận Tông (1388–1398), Thiếu Đế (1398–1400); sau đó Hồ Quý Ly cướp ngôi, đặt quốc hiệu Đại Ngu (1400). XƯNG HÔ: người trong triều gọi vua là 'Quan gia'; vua đã nhường ngôi là 'Thượng hoàng' (tôn hiệu dài, ví dụ 'Hiển Nghiêu Thánh Thọ Thái Thượng Hoàng Đế'); vua mới tự xưng hiệu (Nhân Hoàng, Anh Hoàng, Ninh Hoàng…). Triều Nguyên gọi nước ta là An Nam. Niên hiệu đổi theo từng đời: Kiến Trung (1225), Thiệu Long (1258), Thiệu Bảo (1279), Trùng Hưng (từ tháng 9/1285), Hưng Long (1293), Khai Thái (1324), Khai Hựu (1329), Thiệu Phong (1341), Xương Phù (1377), Quang Thái (1388), Kiến Tân (1398). ĐỊA DANH: kinh sư Thăng Long; phủ Thiên Trường (Thượng hoàng ở cung Trùng Quang, vua ở cung Trùng Hoa, chùa Phổ Minh phía tây – xây 1262); điện Đại Minh (cửa Hữu Lang), điện Thiên An, Long Trì, cung Thánh Từ, cung Quan Triều, điện Diên Hiền, gác Nguyên Huyền, cửa Đại triều phía Tây, cửa Hoàng Phúc, các Đoan Minh; hành lang dài 1368 từ gác Nguyên Huyền đến cửa Đại triều. Đền Đồng Cổ, Quốc học viện (1253), cầu Lâm Ba ở chùa Chân Giáo (1248). Cuối triều Hồ Quý Ly dời về thành An Tôn (Thanh Hóa, 1397). TRANG PHỤC (tóm tắt, chi tiết ở mục dress_appearance): mũ chữ đinh đen cho quan văn võ (1300), ống tay áo rộng 9 tấc đến 1 thước 2, không mặc xiêm; vua áo tràng vạt bằng màu vàng, mũ có thao; vương hầu mũ triều thiên (tóc dài) hoặc mũ bao (tóc ngắn); thị vệ mũ bồn hoa; quân xăm: rồng ở bụng/lưng/đùi (đầu triều), hai chữ 'Sát Thát' ở cánh tay (1285), ba chữ đen ở trán (quân túc vệ, 1374); dân thuyền áo ngắn nón lá, nón Ma Lôi đan tre. Các chiếu cấm mặc áo, chải đầu theo người phương Bắc (1370, 1374) cho thấy trang phục Đại Việt cố ý khác Trung Hoa. Quy chế 1396 (thời Hồ Quý Ly nắm quyền) phân màu áo theo phẩm: tía, đỏ thẫm, hồng nhạt, xanh lục, xanh biếc, xanh. LƯU Ý: Toàn thư là sử biên niên; mô tả kiến trúc và hình dáng người rất ít. Các dòng về mái ngói, nền cao… là suy luận chung, chưa có nguồn trong sách. Người viết kịch bản chỉ dùng các mục được cung cấp kèm theo (kiến thức liên quan được chọn theo từng chương) và không bịa thêm.",
- "visual": "Dai Viet (Vietnam) under the Tran dynasty, 13th-14th century, a historically grounded Vietnamese court, not a generic Chinese palace; the court itself forbade copying Northern (Chinese) clothing and hairstyles. Timber-framed halls with tiled roofs, covered corridors linking halls, palace gardens with rock ponds, pine and bamboo; rivers with wooden war boats and banners; whitewashed roadside rest-pavilions. No Forbidden-City yellow-glazed roofs, no Qing or Ming costume. WRITING: the realm used Chinese characters (chu Han); any writing visible in a picture (banner, signboard, plaque, seal, characters inked on a forearm) is traditional Chinese characters only, set in vertical columns on banners. The name of the realm is written 大越.",
+ "status": "Bản nháp: ~1.550 mục từ Toàn thư, đối chiếu Việt Nam Sử Lược và bài khảo cổ trang phục Lý–Trần. Mục ghi \"cần kiểm\" chưa có nguồn trực tiếp; cần người kiểm sử duyệt trước khi công bố.",
+ "script": "TỔNG QUAN: Nhà Trần (1225–1400). Vua nhường ngôi sớm cho thái tử rồi làm Thái thượng hoàng, vẫn cùng nắm việc nước. Các đời vua theo sách: Thái Tông (từ 1225; nhường ngôi 1258), Thánh Tông (1258–), Nhân Tông (–1293), Anh Tông (1293–1313), Minh Tông (1313/14–1329), Hiến Tông (1329–1341), Dụ Tông (1341–1369), Dương Nhật Lễ (1369–70), Nghệ Tông (1370–), Duệ Tông (–1377), Phế Đế/Giản Hoàng (1377–1388), Thuận Tông (1388–1398), Thiếu Đế (1398–1400); sau đó Hồ Quý Ly cướp ngôi, đặt quốc hiệu Đại Ngu (1400). XƯNG HÔ: người trong triều gọi vua là 'Quan gia'; vua đã nhường ngôi là 'Thượng hoàng' (tôn hiệu dài, ví dụ 'Hiển Nghiêu Thánh Thọ Thái Thượng Hoàng Đế'); vua mới tự xưng hiệu (Nhân Hoàng, Anh Hoàng, Ninh Hoàng…). Triều Nguyên gọi nước ta là An Nam. Niên hiệu đổi theo từng đời: Kiến Trung (1225), Thiệu Long (1258), Thiệu Bảo (1279), Trùng Hưng (từ tháng 9/1285), Hưng Long (1293), Khai Thái (1324), Khai Hựu (1329), Thiệu Phong (1341), Xương Phù (1377), Quang Thái (1388), Kiến Tân (1398). ĐỊA DANH: kinh sư Thăng Long; phủ Thiên Trường (Thượng hoàng ở cung Trùng Quang, vua ở cung Trùng Hoa, chùa Phổ Minh phía tây – xây 1262); điện Đại Minh (cửa Hữu Lang), điện Thiên An, Long Trì, cung Thánh Từ, cung Quan Triều, điện Diên Hiền, gác Nguyên Huyền, cửa Đại triều phía Tây, cửa Hoàng Phúc, các Đoan Minh; hành lang dài 1368 từ gác Nguyên Huyền đến cửa Đại triều. Đền Đồng Cổ, Quốc học viện (1253), cầu Lâm Ba ở chùa Chân Giáo (1248). Cuối triều Hồ Quý Ly dời về thành An Tôn (Thanh Hóa, 1397). TRANG PHỤC (tóm tắt, chi tiết ở mục dress_appearance): mũ chữ đinh đen cho quan văn võ (1300), ống tay áo rộng 9 tấc đến 1 thước 2, không mặc xiêm; vua áo tràng vạt bằng màu vàng, mũ có thao; vương hầu mũ triều thiên (tóc dài) hoặc mũ bao (tóc ngắn); thị vệ mũ bồn hoa; quân xăm: rồng ở bụng/lưng/đùi (đầu triều), hai chữ 'Sát Thát' ở cánh tay (1285), ba chữ đen ở trán (quân túc vệ, 1374); dân thuyền áo ngắn nón lá, nón Ma Lôi đan tre. Các chiếu cấm mặc áo, chải đầu theo người phương Bắc (1370, 1374) cho thấy trang phục Đại Việt cố ý khác Trung Hoa. Quy chế 1396 (thời Hồ Quý Ly nắm quyền) phân màu áo theo phẩm: tía, đỏ thẫm, hồng nhạt, xanh lục, xanh biếc, xanh. LƯU Ý: Toàn thư là sử biên niên; mô tả kiến trúc và hình dáng người rất ít. Các dòng về mái ngói, nền cao… là suy luận chung, chưa có nguồn trong sách. Người viết kịch bản chỉ dùng các mục được cung cấp kèm theo (kiến thức liên quan được chọn theo từng chương) và không bịa thêm. ĐỐI CHIẾU SỬ LIỆU (Toàn thư là nguồn chính; Việt Nam Sử Lược của Trần Trọng Kim là sách tóm lược hiện đại, dùng để kiểm tra): (1) Hai chữ thích ở cánh tay quân: Toàn thư viết \"Sát Thát\", Việt Nam Sử Lược viết \"Sát Đát\" — cùng chữ 殺韃 (韃 đọc Thát hoặc Đát). (2) Lời \"xin chém đầu tôi trước rồi hãy hàng\" của Trần Quốc Tuấn: Toàn thư (lời bàn năm 1300) cho người hỏi hàng là Thánh Tông; Việt Nam Sử Lược cho là Nhân Tông. (3) Hội nghị Diên Hồng: Toàn thư cho Thượng hoàng triệu phụ lão; Việt Nam Sử Lược cho vua Nhân Tông. (4) Người cởi áo ngự liệm Toa Đô: vua Nhân Tông (hai sách đồng ý; không phải Thượng hoàng). (5) Chỉ huy Hàm Tử: Việt Nam Sử Lược nêu Chiêu Văn Vương Nhật Duật làm tướng, Quốc Toản phó tướng, Nguyễn Khoái; Toàn thư nêu \"Chiêu Thành Vương\", Quốc Toản, Nguyễn Khoái và việc quân Tống của Nhật Duật. (6) Chương Dương: Toàn thư nêu Quang Khải, Quốc Toản, Trần Thông, Nguyễn Khả Lạp, Nguyễn Truyền; Việt Nam Sử Lược nêu Quang Khải, Quốc Toản, Phạm Ngũ Lão. (7) Trần Kiện bị bắn chết: Toàn thư — gia nô Hưng Đạo Nguyễn Địa Lô; Việt Nam Sử Lược — thổ hào Nguyễn Thế Lộc, Nguyễn Lĩnh. (8) Đắp đê: Việt Nam Sử Lược 1244 (Đỉnh nhĩ đê); Toàn thư 1248 (đê quai vạc). (9) Tên sứ Nguyên: Toàn thư \"Sài Xuân\", Việt Nam Sử Lược \"Sài Thung\". (10) Số quân Nguyên và thạch lương: Việt Nam Sử Lược ghi 50 vạn (1284), hơn 30 vạn (1287), 17 vạn thạch lương (sử cũ chép 70 vạn) — số liệu thay đổi theo sách, nên nói chung chung. (11) Việt Nam Sử Lược ghi Quốc Toản và Lê Phụ Trần giữ Nghệ An năm 1287; Toàn thư không thấy tên Quốc Toản ở các trận 1287–88, cần kiểm. Khi viết lời đọc, dùng tên và chi tiết theo Toàn thư; chỗ hai sách khác nhau thì nói chung chung hoặc để người kiểm sử quyết định.",
+ "visual": "Dai Viet (Vietnam) under the Tran dynasty, 13th-14th century, a historically grounded Vietnamese court, not a generic Chinese palace; the court itself forbade copying Northern (Chinese) clothing and hairstyles. Timber-framed halls with tiled roofs, covered corridors linking halls, palace gardens with rock ponds, pine and bamboo; rivers with wooden war boats and banners; whitewashed roadside rest-pavilions. No Forbidden-City yellow-glazed roofs, no Qing or Ming costume. WRITING: the realm used Chinese characters (chu Han); any writing visible in a picture (banner, signboard, plaque, seal, characters inked on a forearm) is traditional Chinese characters only, set in vertical columns on banners. The name of the realm is written 大越. Men wear their hair in a high topknot (or cropped short under a wrapped cloth cap); feet are often bare, otherwise soft shoes with a slightly upturned toe.",
  "roles": [
   {
    "name": "Vua",
@@ -15,7 +15,7 @@
     "sovereign",
     "monarch"
    ],
-   "text": "The Tran emperor wears a long yellow robe with straight flat-fronted lapels (ao trang vat bang) and a corded cap (mu co thao); carried in a sedan chair with golden-lacquered or red-lacquered carrying poles and coloured parasols; ivory tablet in hand at audiences."
+   "text": "The Tran emperor wears a long yellow robe with a deep crossed collar and straight, flat front edges, and a dark cap with a silk cord, his hair gathered in a high topknot; he is carried in a sedan chair with red- or gold-lacquered poles under coloured parasols, an ivory tablet in his hands at audiences."
   },
   {
    "name": "Thượng hoàng",
@@ -25,7 +25,7 @@
     "senior emperor",
     "father of the emperor"
    ],
-   "text": "The retired emperor lives apart (Thien Truong palace) and may dress plainly in a white cotton robe; he still receives the reigning emperor, who bows to him."
+   "text": "The retired emperor lives apart in his own palace and may dress plainly in a white cotton robe; he still receives the reigning emperor, who bows to him."
   },
   {
    "name": "Quan văn / quan võ",
@@ -40,7 +40,7 @@
     "chancellor",
     "councillor"
    ],
-   "text": "Court officials wear a black cap shaped like the character 'ding' with a purple-and-green silk cloth wrapped around the hair under it, long robes with wide sleeves (about 36 to 48 cm), no skirt-like lower garment; lower-rank attendants wear a blue flower-patterned cap with two small gold rings; officials hold ivory or wooden tablets."
+   "text": "Court officials wear a black cap made of dark cloth wound around the forehead into a short cylinder, with a square cloth flap falling over the nape and a purple-and-green silk cloth wrapped around the topknot beneath; long robes with wide sleeves (sleeve openings roughly 30 to 40 cm), no skirt-like lower garment; lower-rank attendants wear a blue flower-patterned cap with two small gold rings; officials hold ivory or wooden tablets."
   },
   {
    "name": "Vương hầu / hoàng tộc",
@@ -54,7 +54,7 @@
     "tôn thất",
     "duke"
    ],
-   "text": "Princes with long hair wear a high crown-like cap; princes with short hair wear a close-fitting wrapped cap; royal kin travel in sedan chairs with phoenix-carved poles lacquered red and coloured parasols."
+   "text": "Princes with long hair wear a tall crown-like cap; princes with short hair wear a close-fitting wrapped cap; royal kin travel in sedan chairs with phoenix-carved poles lacquered red under coloured parasols."
   },
   {
    "name": "Thị vệ / cấm quân",
@@ -67,7 +67,7 @@
     "cấm quân",
     "sentry"
    ],
-   "text": "Palace guards wear a basin-shaped cap decorated with flowers; their foreheads are tattooed with three black characters."
+   "text": "Palace guards of the 1280s have plain bare foreheads and simple caps; in the 14th century guards wear a wide basin-shaped cap decorated with flowers (forehead tattooing of guard units is only recorded from the late 1290s)."
   },
   {
    "name": "Lính / chiến thuyền",
@@ -89,7 +89,7 @@
     "thích",
     "殺韃"
    ],
-   "text": "Vietnamese soldiers of 1285 have two small Chinese characters 殺韃 inked in black on the bare forearm, hand-sized, visible only where the sleeve is short or rolled up; the shirt itself is plain with nothing printed on it. Wooden river warships with banners, stakes driven into the river bed, bows, crossbows, spears; no medieval European or Mongol armor on the Vietnamese side."
+   "text": "Vietnamese soldiers of 1285 have two small Chinese characters 殺韃 inked in black on the bare forearm, hand-sized, visible only where the sleeve is short or rolled up; the shirt itself is plain with nothing printed on it. Hair in a topknot or cropped short, feet bare. Wooden river warships with banners, stakes driven into the river bed, bows, crossbows, spears; light plain clothing rather than metal armor."
   },
   {
    "name": "Tướng / chỉ huy",
@@ -117,7 +117,7 @@
     "servant",
     "charcoal"
    ],
-   "text": "Commoners wear short shirts and a conical hat woven from bamboo strips (non la, non Ma Loi); boatmen and charcoal sellers in short coats; servants of nobles have characters inked on the forehead; monks have a shaved head and plain cloth robe."
+   "text": "Commoners wear short shirts, bare feet, and a wide conical hat woven from split bamboo; boatmen and charcoal sellers in short coats; servants and commoners of the 1280s have bare foreheads and plain clothing; monks have a shaved head and plain cloth robe."
   },
   {
    "name": "Cung nhân / hoàng hậu",
@@ -132,7 +132,7 @@
     "công chúa",
     "dowager"
    ],
-   "text": "The chronicle does not describe women's clothing: keep court women in simple long layered silk garments; high-ranking women travel in sedan chairs with attendants and a rank-matched escort; avoid Chinese court dress."
+   "text": "Court women wear their hair in a round bun on the crown fixed with pins, sometimes ringed with small flowers and a crescent-shaped comb, silk ribbons falling at the temples; a long dark robe with a white lining showing at collar and cuffs, sleeve openings narrower than men's; high-ranking women add gold bracelets, a jade pendant and small pearl ear studs, and travel in sedan chairs with attendants, dressed in a Vietnamese court style."
   },
   {
    "name": "Sứ giả nhà Nguyên / giặc",
@@ -144,7 +144,7 @@
     "giặc",
     "nguyên"
    ],
-   "text": "Yuan envoys and invading troops appear in northern-style dress distinct from the Vietnamese court; Song refugees fighting with the Vietnamese wear Song-style clothes."
+   "text": "Yuan envoys and invading troops are mounted archers and cavalry in northern-style dress distinct from the Vietnamese court; Song refugees fighting with the Vietnamese wear Song-style robes and carry bows."
   },
   {
    "name": "Xăm rồng (thái long)",
@@ -157,7 +157,7 @@
     "cởi trần",
     "xăm rồng"
    ],
-   "text": "A small stylised dragon (the 'thai long') is inked in dark ink on the bare skin of the belly, back or thigh of a bare-chested soldier, boatman or prince; people wearing shirts and robes have plain clothing with no pattern of this kind."
+   "text": "A small stylised dragon is inked in dark ink on the bare skin of the belly, back or thigh of a bare-chested soldier, boatman or prince; people wearing shirts and robes have plain clothing with no pattern of this kind."
   },
   {
    "name": "Cờ / biểu ngữ",
@@ -201,12 +201,26 @@
     "hoai van"
    ],
    "text": "The flag of Prince Hoai Van (Tran Quoc Toan) carries six Chinese characters in a vertical column: 破彊敵報皇恩."
+  },
+  {
+   "name": "Nghệ nhân múa / giá chi vũ",
+   "keywords": [
+    "dance",
+    "dancer",
+    "dancers",
+    "dancing",
+    "múa",
+    "ca vũ",
+    "performer",
+    "musician"
+   ],
+   "text": "Court dancers wear a turban with an upturned brim, a jewelled necklace, a bare chest, a silk ribbon belt, a pleated skirt and embroidered shoes, rattles in their hands; the dance is of Central Asian origin and is performed when envoys are received."
   }
  ],
- "avoid": "Chinese imperial dragon robe (Qing style), queue hairstyle, Ming or Qing winged official hats, Forbidden City yellow glazed roofs, nine-storey pagodas, Japanese or Korean costume, European armor, modern objects, copying Northern (Chinese) clothing or hairstyle, Latin letters, English words or quoc ngu text anywhere in the image (on clothing, flags, signs or skin), a dragon or any pattern printed on the cloth of a shirt as if it were a tattoo, a large imperial Chinese dragon.",
+ "avoid": "Chinese imperial dragon robe (Qing style), queue hairstyle, Ming or Qing winged official hats, Forbidden City yellow glazed roofs, nine-storey pagodas, Japanese or Korean costume, European armor, modern objects, copying Northern (Chinese) clothing or hairstyle, Latin letters, English words or quoc ngu text anywhere in the image (on clothing, flags, signs or skin), a dragon or any pattern printed on the cloth of a shirt as if it were a tattoo, a large imperial Chinese dragon, iron tiger-head helmets or round-plate armor on ordinary soldiers (documented only on ceremonial statues).",
  "sources": [
   {
-   "claim": "Quan văn võ đội mũ chữ đinh đen; tụng quan đội mũ toàn hoa xanh; ống tay áo rộng 9 tấc đến 1 thước 2; không mặc xiêm",
+   "claim": "Quan văn võ đội mũ chữ đinh đen; tụng quan đội mũ toàn hoa xanh; ống tay áo rộng 9 tấc đến 1 thước 2 (bài khảo cổ quy khoảng 30–40 cm; quy đổi thước Trần chưa chắc); không mặc xiêm",
    "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, tháng 10 năm 1300"
   },
   {
@@ -280,6 +294,50 @@
   {
    "claim": "Chữ Hán trên hình: 殺韃 ở cánh tay (Toàn thư 1285), 破彊敵報皇恩 trên cờ Trần Quốc Toản, 大越 là quốc hiệu; chữ 陳 trên cờ quân là gợi ý thiết kế",
    "ref": "Đại Việt sử ký toàn thư, Q.V (1285); phần còn lại chưa có nguồn trong sách — cần kiểm"
+  },
+  {
+   "claim": "Mũ chữ đinh: vải đen hình trụ quấn trán rủ sau đầu, có miếng vải vuông che gáy (Trần Cương Trung, gốm ngói)",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+  },
+  {
+   "claim": "Tóc nam: búi cao trên đỉnh, tóc ngắn phổ biến thời Trần; nữ: búi tròn, tóc xoắn cài trâm, áo sẫm lót trắng, cửa tay 4 tấc",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (Trần Cương Trung, khoảng 1293)"
+  },
+  {
+   "claim": "Chân trần là thông thường; giày quan bốn mảnh, mũi hơi cong",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+  },
+  {
+   "claim": "Tượng quan lăng Trần Hiến Tông: tóc ngắn, mũ bao, áo viên lĩnh, đai dây",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+  },
+  {
+   "claim": "Phù điêu chùa Hòa Long: người múa giá chi vũ, khăn vành vểnh, ngực trần, váy xếp",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+  },
+  {
+   "claim": "Mũ quyển vân của vua, mũ đầu mâu, mũ đầu hổ, giáp Minh quang: chỉ có hiện vật Lý hoặc một ngói gốm Trần; thời Trần chưa chắc",
+   "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (cần kiểm)"
+  },
+  {
+   "claim": "Vẽ rồng chàm vào đùi vua; Anh Tông không theo; 1323 cấm quân sĩ vẽ mình",
+   "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai"
+  },
+  {
+   "claim": "Người cởi áo ngự liệm Toa Đô 1285 là vua Nhân Tông (không phải Thượng hoàng Thái Tông)",
+   "ref": "Đại Việt sử ký toàn thư, Q.V, năm 1285; Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 10"
+  },
+  {
+   "claim": "Chữ trên cánh tay quân: Toàn thư \"Sát Thát\", Việt Nam Sử Lược \"Sát Đát\" (cùng chữ 殺韃)",
+   "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 5"
+  },
+  {
+   "claim": "Thị vệ và gia nô xăm trán chỉ ghi từ cuối thập niên 1290 (quân đô 1298) và 1360–1374; thời 1285 để trán trơn là suy ra từ chỗ sử chưa ghi",
+   "ref": "Đại Việt sử ký toàn thư, Q.VI–VII; cần kiểm"
+  },
+  {
+   "claim": "Cờ Phá cường địch báo hoàng ân của Quốc Toản (sáu chữ)",
+   "ref": "Đại Việt sử ký toàn thư, Q.V, năm 1282; Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, chú thích 48"
   }
  ],
  "facts": {
@@ -2557,6 +2615,125 @@
     "text": "Sao Chổi ở vùng Tử Vi trăm ngày; Nguyên sai Lương Tằng dụ chầu, vua cáo bệnh, Đào Tử Kỳ bị giữ ở Giang Lăng; Nguyên lập An Nam hành tỉnh, Lưu Nhị Bạt Đô đóng Tĩnh Giang; Nguyên Thế Tổ băng, Thành Tông bãi binh, thả Tử Kỳ; Quốc Chẩn phong Huệ Vũ Đại Vương.",
     "ref": "Q.V, năm 1293",
     "year": 1293
+   },
+   {
+    "title": "Mông Cổ vào Thăng Long lần đầu và \"giặc Phật\" (1257–1258)",
+    "text": "Ngột Lương Hợp Thai (Mông Cổ) đưa sứ sang đòi thần phục; vua Thái Tông giam sứ. Trần Quốc Tuấn giữ phía Bắc ít quân, lui về Sơn Tây; Mông Cổ tràn xuống sông Thao, vua ngự giá thân chinh, lui về sông Hồng rồi sông Thiên Mạc; quân giặc vào Thăng Long thấy ba sứ Mông Cổ bị trói trong ngục (một người đã chết) nên giết phá nam phụ lão ấu. Thái Tông hỏi Thái úy Nhật Hiệu — ông viết xuống nước hai chữ \"Nhập Tống\"; Thủ Độ nói: \"Đầu tôi chưa rơi xuống đất thì xin bệ hạ đừng lo\". Vua tiến đánh Đông Bộ Đầu; quân Mông Cổ không quen thủy thổ, rút về Vân Nam qua trại Quy Hóa bị thổ dân đánh, đi đường không cướp phá nên gọi là \"giặc Phật\".",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 11; Toàn thư Q.V (1257)",
+    "year": 1257
+   },
+   {
+    "title": "Mông Cổ đòi sáu điều (1266)",
+    "text": "Năm 1266 Thánh Tông sai quan sang Tàu xin đừng bắt nho sĩ, thầy bói, thợ thuyền sang cống. Vua Mông Cổ ưng nhưng bắt chịu sáu điều: vua phải thân vào chầu; cho con hay em sang làm tin; biên sổ dân nộp; chịu việc binh dịch; nộp thuế má; vẫn đặt quan giám trị. Vua An Nam cứ lần lữa không chịu; đến 1271 Hốt Tất Liệt đổi quốc hiệu thành Đại Nguyên rồi sai sứ dụ vua sang chầu, Thánh Tông cáo bệnh không đi.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông, mục 2",
+    "year": 1266
+   },
+   {
+    "title": "Đạt lỗ hoa xích và xin đổi thành Dẫn tiến sứ (1275)",
+    "text": "Vua Mông Cổ đặt quan Đạt lỗ hoa xích (tiếng Mông Cổ nghĩa là quan chưởng ấn) đi lại giám trị các châu quận An Nam. Năm 1275 Thánh Tông sai sứ nói nước Nam không phải nước Mường Mán nên không cần quan giám trị, xin đổi thành Dẫn tiến sứ; Nguyên không cho, lại bắt theo sáu điều. Từ đó Nguyên quyết ý đánh, sai quan ở biên giới dò địa thế; bên An Nam cũng đặt quan phòng bị.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông, mục 2",
+    "year": 1275
+   },
+   {
+    "title": "Trần Di Ái, Sài Thung và tòa Tuyên phủ ti (1281–1282)",
+    "text": "Theo Việt Nam Sử Lược: sứ Nguyên Sài Thung (Toàn thư viết Sài Xuân) cưỡi ngựa thẳng vào cửa Dương Minh, không đáp lễ, bày yến mới chịu đến ở điện Tập Hiền. Năm 1282 Nguyên đòi vua sang chầu hoặc đưa vàng ngọc, hiền sĩ, thầy âm dương, thợ khéo mỗi hạng hai người; Nhân Tông sai Trần Di Ái, Lê Tuân, Lê Mục đi thay. Nguyên lập tòa Tuyên phủ ti định giám trị, Nhân Tông đuổi quan Nguyên về; Nguyên lập Di Ái làm An Nam quốc vương, sai Sài Thung đem 1.000 quân đưa về. Gần ải Nam Quan quân ta chặn đánh, Sài Thung bị bắn mù một mắt chạy về, bọn Di Ái bị bắt, tội đồ làm lính. (Mốc năm các sách có thể lệch nhau.)",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 1–2",
+    "year": 1282
+   },
+   {
+    "title": "Thoát Hoan sang đánh, cuộc họp Bình Than và cử Tiết chế (1283–1284)",
+    "text": "Nguyên sai Thoát Hoan làm Trấn Nam vương cùng Toa Đô, Ô Mã Nhi đem quân (VNSL ghi 50 vạn, con số lớn) giả mượn đường đánh Chiêm Thành. Nhân Tông ngự thuyền ra Bình Than họp vương hầu bách quan; có người bàn cho mượn đường, có người bàn cống nộp hoãn binh; chỉ Trần Quốc Tuấn và Trần Khánh Dư xin giữ các nơi hiểm yếu. Tháng 10 năm 1283 Hưng Đạo Vương làm Tiết chế thống lĩnh quân. Tháng 8 năm 1284 Quốc Tuấn truyền hịch các vương hầu hội quân ở Đông Bộ Đầu, quân thủy bộ 20 vạn; dặn: giữ phép tắc, không nhiễu dân, đồng lòng đánh giặc, \"chớ thấy thua mà ngã lòng, chớ thấy được mà tự kiêu\". Phân binh: Trần Bình Trọng đóng ở Bình Than, Khánh Dư giữ Vân Đồn, Quốc Tuấn đóng đại quân ở Vạn Kiếp.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 3–4",
+    "year": 1284
+   },
+   {
+    "title": "Hịch tướng sĩ và Binh thư yếu lược (1284)",
+    "text": "Tại Vạn Kiếp hơn 20 vạn quân tập hợp; Hưng Đạo Vương soạn Binh thư yếu lược (gom binh pháp các nhà) và truyền hịch bằng Hán văn: nêu các tấm gương trung thần xưa (Kỷ Tín, Do Vu, Dư Nhượng, Thân Khoái, Kính Đức, Kiểu Khanh), nhắc những ngụy sứ đi lại ngoài đường đòi ngọc lụa, vàng bạc, trách tướng sĩ mải chọi gà, đánh bạc, săn bắn, rượu ngon, tiếng hát mà quên thù nước; nhắc ơn cấp áo, cấp ăn, thăng thưởng; kết luận ai theo sách này thì là phải đạo thần tử, bỏ sách thì là kẻ thù. Từ đó tướng sĩ thích hai chữ \"Sát Đát\" (殺韃) vào cánh tay.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 4–5",
+    "year": 1284
+   },
+   {
+    "title": "Tiến chiếm biên ải và thất thủ Thăng Long (cuối 1284–đầu 1285)",
+    "text": "Thoát Hoan đánh núi Kỳ Cấp, ải Khả Li, Lộc Châu rồi Chi Lăng; Hưng Đạo Vương thua ra bến Bái Tân, xuống thuyền cùng Dã Tượng và Yết Kiêu về Vạn Kiếp. Nhân Tông ngự thuyền nhỏ xuống Hải Đông vời Hưng Đạo; vì lo nên nói hay là chịu hàng cứu muôn dân, Hưng Đạo tâu: xin chém đầu tôi trước rồi hãy hàng. (Toàn thư gán câu hỏi này cho Thánh Tông — xem mục đối chiếu.) Quân Mông Cổ bắt được quân ta thấy ai cũng thích \"Sát Đát\" ở cánh tay thì giết sạch, kéo sang Kinh Bắc, đóng Đông Bộ Đầu; Hưng Đạo lập trại bờ nam sông. Thoát Hoan cho bắn \"đại bác\" sang phá trại (từ ngữ của VNSL, chưa rõ loại khí giới — cần kiểm), làm cầu phao qua sông, vây hạ Thăng Long. Hưng Đạo rước Thượng hoàng và vua ra khỏi thành đi đường Tam Chỉ, Thủy Chú, sông Nam Triều (Bạch Đằng) vào Thanh Hóa; Trần Ích Tắc, Trần Tú Viên ra hàng. Chiến thuyền Nguyên đóng dọc sông Hồng từ Thăng Long xuống khúc Đại Hoàng.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 4–6",
+    "year": 1285
+   },
+   {
+    "title": "Hàm Tử (tháng 4/1285) — theo Việt Nam Sử Lược",
+    "text": "Nhân Tông sai Chiêu Văn Vương Trần Nhật Duật làm tướng, Trần Quốc Toản làm phó tướng cùng tướng quân Nguyễn Khoái đem 5 vạn quân đón đánh Toa Đô ở mặt Hải Dương; tháng 4 gặp thuyền Toa Đô ở Hàm Tử (huyện Đông An, Hưng Yên). Quân Tống của Triệu Trung giúp thắng; Toa Đô lui về Thiên Trường. Nhật Duật cho Quốc Toản báo tin về Thanh Hóa.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 8; đối chiếu Toàn thư Q.V (1285)",
+    "year": 1285
+   },
+   {
+    "title": "Chương Dương và thơ \"Đoạt sáo\" (1285) — theo Việt Nam Sử Lược",
+    "text": "Trần Quang Khải với Trần Quốc Toản và Phạm Ngũ Lão từ Thanh Hóa đi thuyền vòng đường biển ra bến Chương Dương (huyện Thượng Phúc), đánh chiến thuyền Nguyên, lên bộ đuổi đến chân thành Thăng Long; Thoát Hoan ra cự bị phục binh đánh úp, bỏ Thăng Long chạy sang sông Hồng về Kinh Bắc. Quang Khải vào thành mở tiệc khao quân và ngâm thơ \"Đoạt sáo Chương Dương độ, Cầm hồ Hàm Tử quan...\" (Toàn thư nêu các tên Trần Thông, Nguyễn Khả Lạp, Nguyễn Truyền đem dân binh; VNSL nêu Phạm Ngũ Lão — hai sách khác nhau).",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 9; đối chiếu Toàn thư Q.V (1285)",
+    "year": 1285
+   },
+   {
+    "title": "Tây Kết: Toa Đô tử trận (tháng 5/1285) — theo Việt Nam Sử Lược",
+    "text": "Toa Đô tiến vào sông Thiên Mạc rồi lui đóng ở Tây Kết, chưa biết Thoát Hoan đã thua. Hưng Đạo Vương chia quân đánh trại Nguyên và đặt phục binh; Toa Đô trúng tên chết, Ô Mã Nhi lẻn xuống thuyền con ra biển trốn về Tàu. Quan quân bắt hơn 3 vạn tù binh (số của VNSL, chưa đối chiếu). Khi đưa đầu Toa Đô về, vua Nhân Tông than \"Làm bầy tôi nên như người này!\" rồi cởi áo ngự đắp lên và sai chôn cất theo lễ.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 10; đối chiếu Toàn thư Q.V (1285)",
+    "year": 1285
+   },
+   {
+    "title": "Vạn Kiếp: Thoát Hoan chạy về Tàu (mùa hè 1285) — theo Việt Nam Sử Lược",
+    "text": "Thoát Hoan đóng Bắc Giang, nghe Toa Đô chết, Ô Mã Nhi trốn, quân sĩ ngã lòng; mùa hè nóng, dịch tễ. Hưng Đạo sai Nguyễn Khoái, Phạm Ngũ Lão đem 3 vạn quân phục hai bên rừng sậy ở bên sông Vạn Kiếp; hai con là Hưng Võ Vương Nghiễn và Hưng Hiếu Vương Úy dẫn 3 vạn quân chặn đường về châu Tư Minh. Lý Hằng bị tên bắn chết; Thoát Hoan phải chui vào ống đồng cho quân kéo xe chạy; Lý Quán trúng tên chết ở Tư Minh. VNSL tổng kết: sáu tháng (tháng chạp 1284–tháng 6/1285) đuổi 50 vạn quân Mông Cổ ra khỏi bờ cõi.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 11",
+    "year": 1285
+   },
+   {
+    "title": "Chuẩn bị lần thứ hai (1285–1287)",
+    "text": "Thoát Hoan xin thêm quân báo thù; Nguyên chủ định cất quân noi đường châu Khâm, Liêm, nhưng quan tỉnh Hồ Nam là Tuyến Kha can cho quân nghỉ dưỡng sức. Nhân Tông hỏi Hưng Đạo, ông tâu quân ta nay đã quen chinh chiến, quân Nguyên đi xa mỏi mệt và đã chột dạ vì Toa Đô, Lý Hằng, Lý Quán tử trận. Tháng 2/1287 Nguyên Thế Tổ sai Thoát Hoan làm Đại Nguyên soái, đem 7 vạn quân, 500 thuyền, 6 nghìn quân Vân Nam, 1 vạn 5 nghìn quân bốn châu ngoài biển (VNSL tổng cộng \"hơn 30 vạn\": số liệu không khớp, cần kiểm), giả danh đưa Trần Ích Tắc về làm An Nam quốc vương; Trương Văn Hổ chở lương theo đường biển.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 1–2",
+    "year": 1287
+   },
+   {
+    "title": "Phòng thủ 1287: \"binh cốt giỏi, không cốt nhiều\"",
+    "text": "Các quan xin tuyển thêm binh; Hưng Đạo nói: binh cốt giỏi chứ không cốt nhiều, như Bồ Kiên có trăm vạn quân cũng vô ích. Phân công: Trần Nhật Duật và Nguyễn Khoái giữ mặt Lạng Sơn; Trần Quốc Toản và Lê Phụ Trần giữ mặt Nghệ An (VNSL ghi như vậy — Toàn thư không thấy tên Quốc Toản ở các trận 1287–88, cần kiểm); Hưng Đạo ra mặt Quảng Yên; ba đồn Sa, Từ, Trúc ở gần Tư Minh; cửa sông Đại Than; đại quân đóng núi Phù Sơn. Nguyên mạnh hơn, quân ta rút về Vạn Kiếp; Thoát Hoan chiếm núi Phả Lại, Chí Linh; Hưng Đạo lui về Thăng Long, sai rước xa giá lánh, rồi Thượng hoàng và vua xuống thuyền ra biển vào Thanh Hóa. Ô Mã Nhi phá Thiên Lăng (lăng tổ nhà Trần) ở Long Hưng.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 2",
+    "year": 1287
+   },
+   {
+    "title": "Vân Đồn (cuối 1287–đầu 1288) — theo Việt Nam Sử Lược",
+    "text": "Quân Nguyên đóng ở Vạn Kiếp lương sắp cạn; Thoát Hoan sai Ô Mã Nhi ra cửa biển Đại Bàng đón thuyền lương của Trương Văn Hổ. Ô Mã Nhi đánh bại Khánh Dư ở Vân Đồn rồi ra khơi. Thượng hoàng sai bắt Khánh Dư; ông xin khoan vài hôm để lập công chuộc tội, nhặt thuyền bè phục sẵn, đợi thuyền lương Văn Hổ vào cửa Lục Thủy Dương thì đổ ra đánh, cướp sạch lương và khí giới, Văn Hổ chạy thuyền nhỏ về Quỳnh Châu. Thượng hoàng mừng, xá tội, bảo Hưng Đạo tha tù binh về báo tin cho Thoát Hoan làm quân Nguyên ngã lòng. Ô Mã Nhi chờ mãi không thấy lương, phá trại An Hưng rồi rút về Vạn Kiếp.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 3",
+    "year": 1288
+   },
+   {
+    "title": "Bạch Đằng (tháng 3/1288) — theo Việt Nam Sử Lược",
+    "text": "Thoát Hoan muốn rút về; Hưng Đạo biết ý, sai giữ núi Kỳ Cấp và ải Nữ Nhi chặn đường cầu viện. Thoát Hoan cho Ô Mã Nhi, Phàn Tiếp đem thủy quân về trước theo sông Bạch Đằng, Trình Bằng Phi và Trương Quân chặn hậu đường bộ. Hưng Đạo sai Nguyễn Khoái lẻn lên thượng lưu, đóng khắp giữa dòng những cọc gỗ đẽo nhọn bịt sắt, phục binh chờ thủy triều lên thì khiêu chiến, nhử thuyền giặc qua chỗ cọc rồi quay lại đánh khi triều xuống. Hưng Đạo đứng trên sông Hóa thề: \"Trận này không phá xong giặc Nguyên thì không về đến sông này nữa\". Thuyền Nguyên vướng cọc, đắm vỡ nhiều, lấy hơn 400 chiếc; Ô Mã Nhi, Phàn Tiếp, Tích Lệ, Cơ Ngọc bị bắt.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 4; đối chiếu Toàn thư Q.V (1288)",
+    "year": 1288
+   },
+   {
+    "title": "Nội Bàng: Thoát Hoan chạy trốn (1288) — theo Việt Nam Sử Lược",
+    "text": "Nghe thủy quân tan, Thoát Hoan đi đường bộ cùng Trình Bằng Phi, A Bát Xích, Áo Lỗ Xích, Trương Quân, Trương Ngọc; ở ải Nội Bàng gặp Phạm Ngũ Lão, Nguyễn Chế Nghĩa phục sẵn. Trương Quân đoạn hậu 3.000 quân bị Ngũ Lão chém chết; A Bát Xích và Trương Ngọc gặp quân ta ở hai sườn núi bắn tên thuốc độc như mưa, đều tử trận. Thoát Hoan nhờ Trình Bằng Phi giữ gìn chạy qua Đan Kỹ, Lộc Châu, đường tắt về Tư Minh; Áo Lỗ Xích về Yên Kinh. Quân Nguyên hao hơn một nửa.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 5",
+    "year": 1288
+   },
+   {
+    "title": "Khải hoàn: hiến phù ở Chiêu Lăng, Trung hưng thực lục, Thái bình diên yến (1288)",
+    "text": "Thượng hoàng và Nhân Tông về đến Long Hưng; vua đem tướng Nguyên bị bắt (Ô Mã Nhi, Phàn Tiếp, Tích Lệ, Cơ Ngọc) làm lễ hiến phù trước Chiêu Lăng. Sai văn thần ghi công các tướng thành sách Trung hưng thực lục, sai thợ vẽ tranh các tướng treo ở gác công thần. Về Thăng Long mở tiệc khao thưởng tướng sĩ và cho dân mở hội vui ba ngày, gọi là Thái bình diên yến. Thượng hoàng Thánh Tông làm hai câu thơ kỷ niệm: \"Xã tắc hai phen bọn ngựa đá, Sơn hà thiên cổ vững âu vàng\" (bản dịch của VNSL).",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 5, 7",
+    "year": 1288
+   },
+   {
+    "title": "Hòa với Nguyên và số phận tù tướng (1288–1289)",
+    "text": "Tháng 10/1288 Nhân Tông sai Đỗ Thiên Thư sang xin theo lệ cống như xưa. Tháng 2/1289 trả Tích Lệ, Cơ Ngọc về Tàu; Phàn Tiếp lo mà bệnh chết, hỏa táng, vợ con đem hài cốt về nước. Ô Mã Nhi giết hại nhiều người nên vua căm giận, theo mưu Hưng Đạo sai người đưa ra giữa biển đánh đắm thuyền cho chết đuối. Sau vua Dực Tông nhà Nguyễn phê bốn chữ \"bất nhân phi nghĩa\". Nguyên vẫn đòi vua sang chầu, Nhân Tông lấy cớ có tang, sai Đào Tử Kỳ đem đồ cống sang; Nguyên giam Tử Kỳ ở Giang Lăng, sai Lưu Quốc Kiệt sửa soạn binh lương, nhưng khi vua Thế Tổ mất thì bãi việc binh.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 6–8",
+    "year": 1289
+   },
+   {
+    "title": "Định công, phạt tội (tháng 4/1289) — theo Việt Nam Sử Lược",
+    "text": "Vương hầu có công đều thăng trật; tướng sĩ khác họ có công lớn được ban quốc tính; Nguyễn Khoái phong hầu, ăn lộc làng Khoái Lộ; Phạm Ngũ Lão thăng Quản Thánh Dực quân; các chúa Mường đem dân binh đánh giặc cũng được phong hầu. Khi xét tội người hàng giặc, Thượng hoàng cho đốt tráp biểu hàng của các quan để yên lòng mọi người; chỉ trị người quả thật theo giặc: Trần Kiện, Trần Văn Lộng tuy đã chết nhưng con cháu bị đổi từ họ tôn thất ra họ Mai; Trần Ích Tắc nghĩ tình cận thân không bỏ họ nhưng gọi là \"ả Trần\" (nhút nhát như đàn bà); hai làng Bàng Hà, Ba Điểm theo giặc trước hết bị đồ làm binh lính, không được làm quan. Thượng hoàng Thánh Tông về Thiên Trường, mất tháng 5/1290.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 7",
+    "year": 1289
+   },
+   {
+    "title": "Trần Quốc Chân (Huệ Võ Vương) bị oan chết (đời Minh Tông)",
+    "text": "Quốc Chân là cha của hoàng hậu Minh Tông, từng đánh Chiêm Thành thắng nhiều lần. Triều thần chia hai phe về việc lập thái tử: Văn Hiến Hầu và Trần Khắc Chung xin lập hoàng tử Vượng; Quốc Chân xin chờ hoàng hậu sinh con trai. Văn Hiến Hầu cho tên đầy tớ Trần Nhạc một trăm lạng vàng vu cáo Quốc Chân mưu phản; vua giam ông ở chùa Tư Phúc, nghe Khắc Chung bỏ đói bỏ khát cho chết (hoàng hậu lấy áo nhúng nước vắt cho uống); sau vợ lẽ của Nhạc tố cáo mới rõ oan.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, II. Trần Minh Tông (mục 1)"
    }
   ],
   "people": [
@@ -4305,6 +4482,47 @@
     "text": "Văn Đức bị phế, lấy em gái làm Thánh Tư.",
     "ref": "Q.V, năm 1293",
     "year": 1293
+   },
+   {
+    "title": "Trần Hưng Đạo (Quốc Tuấn) — theo Việt Nam Sử Lược",
+    "text": "Danh tướng đệ nhất; mất ngày 20 tháng 8 năm Canh Tý (1300). Chức tước: Thái sư, Thượng phụ, Thượng quốc công, Bình Bắc Đại Nguyên soái, Hưng Đạo Đại Vương; vua sai làm sinh từ ở Vạn Kiếp. Dù được chuyên quyền phong tước từ hầu trở xuống, ông không tự tiện phong thưởng; nhà giàu quyên tiền gạo cho quân chỉ được phong \"giả lan tướng\" (tướng cho vay lương). Lời dặn khi mất: khoan sức dân làm kế sâu rễ bền gốc; dùng binh phải dồn lòng như cha con một nhà; kẻ địch dùng \"tràng trận\" thì ta dùng \"đoản binh\".",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, I. Trần Anh Tông, mục 2",
+    "year": 1300
+   },
+   {
+    "title": "Phạm Ngũ Lão — theo Việt Nam Sử Lược",
+    "text": "Người làng Phù Ủng, huyện Mỹ Hào (Hải Dương, nay thuộc Hưng Yên); theo Hưng Đạo Vương đánh Nguyên. Sau 1288 thăng Quản Thánh Dực quân; về sau là đại tướng. Trị quân có kỷ luật, đãi tướng hiệu như người nhà, cùng sĩ tốt chịu cam khổ nên quân gọi là \"phụ tử chi binh\". Giỏi cả văn lẫn võ, có bài thơ Thuật hoài (\"Hoành sáo giang sơn cáp kỷ thu / Tam quân tỳ hổ khí thôn ngưu...\").",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, I. Trần Anh Tông, mục 2",
+    "year": 1289
+   },
+   {
+    "title": "Lê Tắc",
+    "text": "Người nhà (gia thuộc) của Trần Kiện; khi Kiện bị bắn chết ở Lạng Sơn, Lê Tắc cướp được thây đem mai táng ở gò Ôn Khâu rồi trốn sang Tàu. Dòng dõi Nguyễn Phu thứ sử Giao Châu đời Đông Tấn. Ở Tàu viết An Nam chí lược, nay còn ở Trung Quốc và Nhật Bản.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 6; Toàn thư gọi là Lê Trắc",
+    "year": 1285
+   },
+   {
+    "title": "Trần Ích Tắc — theo Việt Nam Sử Lược",
+    "text": "Hoàng đệ Thánh Tông, người hay chữ nhất nước lúc ấy, mở học đường cho văn sĩ (Mạc Đĩnh Chi học ở đấy). Năm 1285 ra hàng Thoát Hoan, 1287 được Nguyên giả danh đưa về làm An Nam quốc vương; sau khi Nguyên thua phải ở Ngạc Châu bên Tàu; trong nước bị gọi là \"ả Trần\".",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Thánh Tông, mục 1; Giặc nhà Nguyên I–II",
+    "year": 1285
+   },
+   {
+    "title": "Phạm Nhan (Nguyễn Nhan) — truyền thuyết",
+    "text": "Có sách chép lần thứ hai Thoát Hoan đem theo hướng đạo Nguyễn Nhan (tự Bá Linh), cha là người Quảng Đông buôn bán ở Nam, mẹ ở làng An Bài (Đông Triều); đỗ tiến sĩ, giỏi phù thủy, dùng phép giúp quân Nguyên; Hưng Đạo bắt được đưa về chém ở An Bài. Dân gian tin hồn hiện trêu ghẹo, gọi là Phạm Nhan. Đây là truyền thuyết, không thuộc chính sử.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), chú thích 53 (Giặc nhà Nguyên II) — truyền thuyết, không dùng như sự kiện chắc chắn"
+   },
+   {
+    "title": "Anh Tông (Trần Thuyên) — tính nết",
+    "text": "Lên ngôi 1293. Lúc đầu hay uống rượu, đêm đi chơi lén; có hôm say đến nỗi Thượng hoàng Nhân Tông về kinh mà vẫn ngủ, bị quở; Đoàn Nhữ Hài (khi đó là học trò) soạn biểu tạ tội giúp nên được làm ngự sử trung tán; từ đó vua bỏ rượu. Hay vẽ, từng làm tập Thủy Vân tùy bút nhưng đem đốt khi sắp mất; khi đau nặng gạt việc gọi thầy tăng: \"Thầy tăng đã chết đâu mà biết được sự chết\". Trị vì 21 năm, nhường ngôi 6 năm, thọ 54.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, I. Trần Anh Tông, mục 1",
+    "year": 1293
+   },
+   {
+    "title": "Trần Thủ Độ — theo Việt Nam Sử Lược",
+    "text": "\"Một tay gian hùng\", không có học vấn, chủ ý gây dựng cơ nghiệp nhà Trần cho bền: ép Lý Huệ Tông tự vẫn (\"nhổ cỏ phải nhổ cả rễ\"), chôn sống tôn thất họ Lý ở Hoa Lâm (1232), bắt họ Lý đổi sang họ Nguyễn, ép vua bỏ Chiêu Thánh để lấy chị của bà (vợ Trần Liễu đã có thai), nhưng cũng là đại công thần giúp Thái Tông dẹp giặc, dựng sức nước để sau chống Mông Cổ. Khi quân Mông Cổ vào, Thủ Độ nói: \"Đầu tôi chưa rơi xuống đất thì xin bệ hạ đừng lo\".",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 1–2",
+    "year": 1232
    }
   ],
   "titles_offices": [
@@ -5939,6 +6157,35 @@
     "text": "Quốc Chẩn 1293",
     "ref": "Q.V, năm 1293",
     "year": 1293
+   },
+   {
+    "title": "Quan chế Trần (tóm tắt Việt Nam Sử Lược)",
+    "text": "Văn võ đại thần: Tam công, Tam thiếu, Thái úy, Tư mã, Tư đồ, Tư không. Tể tướng: Tả hữu Tường quốc, Thủ tướng, Tham tri. Văn giai nội chức: các bộ Thượng thư, Thị lang, Lang trung, Viên ngoại, Ngự sử; ngoại chức: An phủ sứ, Tri phủ, Thông phán, Thiêm phán. Võ giai nội chức: Phiêu kỵ thượng tướng quân, Cẩm vệ thượng tướng quân, Kim ngô đại tướng quân, Võ vệ đại tướng quân, Phó đô tướng quân; ngoại chức: Kinh lược sứ, Phòng ngự sứ, Thủ ngự sứ, Quan sát sứ, Đô hộ, Đô thống, Tổng quản. Quan lại cứ 10 năm thăng một hàm, 15 năm thăng một chức.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 8"
+   },
+   {
+    "title": "Chia 12 lộ và quan địa phương (1242)",
+    "text": "Năm 1242 Thái Tông chia nước làm 12 lộ; mỗi lộ có An phủ sứ (chánh, phó hai viên); dưới có Đại tư xã (từ ngũ phẩm trở lên) và Tiểu tư xã (lục phẩm trở xuống), mỗi viên cai hai đến bốn xã; mỗi xã có một xã quan là Chánh sử giám. Lộ nào cũng có sổ dân tịch riêng.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 3",
+    "year": 1242
+   },
+   {
+    "title": "Đạt lỗ hoa xích / Dẫn tiến sứ",
+    "text": "Đạt lỗ hoa xích: quan Mông Cổ giám trị (nghĩa là chưởng ấn) đặt ở An Nam. Dẫn tiến sứ: chức Thánh Tông xin đổi (1275) để thành quan đón tiếp thay vì giám trị.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông, mục 2",
+    "year": 1275
+   },
+   {
+    "title": "Giả lan tướng",
+    "text": "Danh hiệu Hưng Đạo Vương phong cho nhà giàu quyên tiền gạo nuôi quân (nghĩa là tướng cho vay lương); ông không tự tiện phong tước thật cho ai dù được quyền.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, I. Trần Anh Tông, mục 2",
+    "year": 1300
+   },
+   {
+    "title": "Tuyên phủ ti",
+    "text": "Tòa do Nguyên Thế Tổ định lập (1282) để đặt quan liêu thuộc sang giám trị các châu huyện An Nam; Nhân Tông không nhận, đuổi về.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 2",
+    "year": 1282
    }
   ],
   "places": [
@@ -7411,6 +7658,42 @@
     "text": "Nguyên giữ Tử Kỳ; đóng quân; nơi Thoát Hoan chạy",
     "ref": "Q.V, năm 1293",
     "year": 1293
+   },
+   {
+    "title": "Chi Lăng",
+    "text": "Cửa Chi Lăng (tục gọi bầu Chi Lăng), tổng Chi Lăng gần ga Tuần Muội, châu Ôn, Lạng Sơn — nơi hiểm yếu; Nguyên thắng quân ta ở đây 1284; sau Lê Thái Tổ giết Liễu Thăng cũng ở đây.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, chú thích 41",
+    "year": 1284
+   },
+   {
+    "title": "Vạn Kiếp (Kiếp Bạc)",
+    "text": "Làng Kiếp Bạc, Hải Dương; nơi Hưng Đạo Vương đóng đại quân, hội hơn 20 vạn quân, và nơi sau lập sinh từ thờ ông.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 4; Anh Tông, mục 2",
+    "year": 1284
+   },
+   {
+    "title": "Bình Than",
+    "text": "Làng Bình Than, tổng Vạn Ti, huyện Gia Bình (Bắc Ninh), chỗ sông Đuống nối sông Thái Bình; nơi Nhân Tông họp vương hầu bàn kế chống Nguyên (1282); Trần Bình Trọng đóng đồn ở đó.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 3–4, chú thích 39",
+    "year": 1282
+   },
+   {
+    "title": "Đông Bộ Đầu",
+    "text": "Bến phía đông sông Nhị (hạt huyện Thượng Phúc), nơi Thái Tông đánh Mông Cổ 1258, Hưng Đạo duyệt quân 1284 và Thoát Hoan đóng quân 1285.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Trần Thái Tông, mục 11; Giặc nhà Nguyên I",
+    "year": 1284
+   },
+   {
+    "title": "Long Hưng và Thiên Lăng (Chiêu Lăng)",
+    "text": "Phủ Long Hưng (Tiên Hưng, Thái Bình) có Thiên Lăng, lăng tổ nhà Trần; Ô Mã Nhi sai phá 1287; sau thắng, Nhân Tông đem tướng Nguyên bị bắt đến hiến phù trước Chiêu Lăng.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 2, 5",
+    "year": 1288
+   },
+   {
+    "title": "Thiên Trường (Tức Mặc)",
+    "text": "Phủ Thiên Trường chính là làng Tức Mặc; Thái Tông mất ở đây năm 1277; Thượng hoàng ở đây khi nhường ngôi.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông",
+    "year": 1277
    }
   ],
   "dress_appearance": [
@@ -7871,9 +8154,104 @@
     "year": 1290
    },
    {
-    "title": "Thượng hoàng Thái Tông",
-    "text": "Cởi áo ngự liệm Toa Đô",
+    "title": "Vua Nhân Tông",
+    "text": "Cởi áo ngự liệm Toa Đô (không phải Thượng hoàng Thái Tông: Thái Tông đã mất từ 1277). Việt Nam Sử Lược cũng chép là vua Nhân Tông.",
     "ref": "Q.V, năm 1285",
+    "year": 1285
+   },
+   {
+    "title": "Giới hạn tư liệu về trang phục Trần",
+    "text": "Không còn trang phục bằng vải; mọi kết luận dựa vào tượng, ngói gốm và phù điêu (nhiều tượng đã bị trùng tu bằng xi măng), kèm ghi chép của sử và của sứ Nguyên Trần Cương Trung (người ngoài nhìn vào). Hiện vật Lý nhiều hơn Trần; việc dùng cho thời Trần là suy ra từ sự kế thừa. Khi dựng ảnh nên giữ hình dáng chung, tránh chi tiết quá cụ thể.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+   },
+   {
+    "title": "Mũ chữ đinh: cấu tạo",
+    "text": "Mũ/khăn vải đen hình trụ, quấn quanh trán rồi rủ xuống phía sau; sau gáy có miếng vải vuông che cổ và một phần vai. Trần Cương Trung tả phần trước mũ dài hai thước gấp xuống gáy, buộc dây, trên đỉnh cài một cái kim, quan thêm dải lụa ở đó (tác giả bài viết ngờ chữ \"đinh\" 釘 là chép nhầm \"câu\" 鉤, hợp với hình trên ngói gốm). Có tượng buộc nút gần đỉnh, có tượng để mũ và tóc rủ xuống gáy. Sử ghi 1300: quan văn võ đội mũ chữ đinh đen; 1301: quan văn võ đều đội mũ chữ đinh.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com); Toàn thư Q.VI (1300, 1301)",
+    "year": 1300
+   },
+   {
+    "title": "Mũ quyển vân / thông thiên của vua",
+    "text": "Mũ vua có nóc cao, chóp cong ra sau như mây cuộn (theo An Nam chí lược). Hiện vật chỉ là gốm nâu thời Lý: chim thần đội mũ đen viền hạt trai, sọc trắng dọc, cánh vải đen hai bên thái dương, dây buộc đen, chóp cong ra sau. Chưa có hiện vật Trần; có thể Trần kế thừa từ Lý. Sử Trần chỉ ghi vua đội mũ có thao (1313).",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (chưa có hiện vật Trần — cần kiểm)",
+    "year": 1313
+   },
+   {
+    "title": "Mũ đầu mâu (mũ trụ)",
+    "text": "Mũ hình cầu hoặc bán cầu, đỉnh có nhú nhỏ (chứa búi tóc), viền khắc hoa, phía sau có tấm vải hoặc da che gáy. Sử ghi năm 1002 Lê Đại Hành phát hàng nghìn chiếc cho sáu quân; thấy trên tượng thần tướng và kim cương thời Lý. Quân Trần có dùng hay không: chưa có bằng chứng trực tiếp.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (thời Trần chưa có bằng chứng — cần kiểm)",
+    "year": 1002
+   },
+   {
+    "title": "Mũ đầu hổ",
+    "text": "Chỉ một hiện vật: ngói gốm thời Trần có hình người đội mũ chóp đầu hổ, vẻ mặt dữ, vảy cá khắc che tai và gáy. Có thể của tướng hoặc của quân cấm vệ mang tên hổ (suy đoán). Từ điển Trung Hoa nói mũ hổ bằng sắt có từ Tùy–Đường, sang Tống không còn.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (một hiện vật, suy đoán — cần kiểm)"
+   },
+   {
+    "title": "Tóc nam giới thời Trần",
+    "text": "Kiểu phổ biến nhất: búi tóc tròn cao trên đỉnh đầu, hơi nghiêng về phía trán (gặp ở cung đình, quân đội và đời thường). Có kiểu búi cao để lộ ~10 cm tóc; kiểu buộc đuôi ngựa dài 20–25 cm tới gáy; thời Trần tóc ngắn phổ biến hơn (quy chế 1303 phân biệt vương hầu tóc dài đội mũ triều thiên với tóc ngắn đội mũ bao). Cạo đầu có trong sách nhưng không có hiện vật.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com); Toàn thư Q.VI (1303)",
+    "year": 1303
+   },
+   {
+    "title": "Tóc và mũ phụ nữ (Trần Cương Trung)",
+    "text": "Sứ Nguyên Trần Cương Trung (khoảng 1293) tả phụ nữ Đại Việt không bôi dầu tóc, cắt tóc chừa khoảng 3 tấc, xoắn trên đỉnh đầu, buộc chỉ, cài trâm, để trống gáy. Hiện vật cho thấy các kiểu: búi tròn trên đỉnh (tầng lớp cao), búi hình quạt có khe giữa (Lý), tết thành dải quấn quanh đầu (có lẽ phổ biến nhất), hai búi hai bên đỉnh (hiếm, chủ yếu trên tượng phỗng — có thể là người bình dân), búi thấp rẽ ngôi hai bên.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)",
+    "year": 1293
+   },
+   {
+    "title": "Trang sức tóc phụ nữ",
+    "text": "Vòng hoa quấn trán (thường 5–6 bông giống nhau); lược/trâm hình trăng khuyết khắc hoa đối xứng cài vào búi (có loại cài sau búi, có loại thêm dải lụa dài); dải lụa buông hai bên thái dương xuống vai; lồng hình búp sen bốn cánh bao búi tóc; mũ hoa nhiều tầng năm hoặc bảy cánh. Văn bia Thiệu Long tự nhắc \"phượng kế\" (búi tóc kiểu phượng) nhưng chưa tìm được hiện vật trâm phượng.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+   },
+   {
+    "title": "Trang sức của phụ nữ quyền quý (bia Thiệu Long tự)",
+    "text": "Bia chùa Thiệu Long tả Đặng Ngũ Nương với kim xuyến (vòng vàng), phó lục già (sáu món cài đầu), hương anh (ngọc thơm đeo), chấn (hạt ngọc bên tai). Hiện vật cho thấy bông tai ít thấy trên đầu gốm nữ; vì vậy hình dung: búi tóc, trâm, vòng vàng, ngọc đeo, hạt tai nhỏ.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+   },
+   {
+    "title": "Áo giao lĩnh (áo tràng vạt)",
+    "text": "Áo cổ vạt chéo, hai vạt chồng lên nhau để lộ phần lớn ngực (cổ chữ V sâu), dân gian gọi áo tràng vạt; hiện vật có niên đại sớm nhất là tượng Phật chùa Phật Tích (1057) mặc hai lớp. Tay áo trên tượng rộng khoảng 50–60 cm; quy chế quan Trần (1300) quy định ống tay 9 tấc đến 1 thước 2 tấc (bài viết quy khoảng 30–40 cm, nhưng thước tấc đời Trần chưa quy đổi chắc chắn).",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com); Toàn thư Q.VI (1300)",
+    "year": 1300
+   },
+   {
+    "title": "Áo viên lĩnh và lớp áo (theo Trần Cương Trung và tượng)",
+    "text": "Áo cổ tròn năm sáu mảnh, dài quá gối, rộng tay, gấu xòe; mặc ngoài áo giao lĩnh, bên dưới là quần có dải buộc ống (tế tất). Trần Cương Trung tả: áo lụa sẫm màu, áo hoa, quần mỏng, cổ tròn viền khâu bằng tơ; phụ nữ cũng mặc áo sẫm nhưng lót trắng bên trong, cửa tay rộng bốn tấc (hẹp hơn nam giới — dấu hiệu phân biệt). Tượng quan ở lăng Trần Hiến Tông: tóc ngắn, mũ bao, áo viên lĩnh dài, thắt đai có dây buộc, quấn chân, nẹp ngực khác màu (đối khâm).",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)",
+    "year": 1293
+   },
+   {
+    "title": "Giày dép",
+    "text": "Người Việt quen đi chân trần; ngay trong buổi chầu cũng có thể không đi giày, quan đôi khi đi giày da. Giày của vua quan ở bức Trúc Lâm đại sĩ xuất sơn đồ: bốn mảnh, mũi hơi cong, màu sáng. Giày người múa cong và nhọn mũi hơn. Chất liệu và màu giày Trần chưa có ghi chép (mô tả thế kỷ XVII: giày vải/lụa đế da, mũi cong như thuyền, thêu hoa).",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com)"
+   },
+   {
+    "title": "Giáp Minh quang (tượng thần tướng, kim cương)",
+    "text": "Mọi tượng thần tướng và kim cương thời Lý còn lại đều mặc giáp Minh quang: tấm ngực tròn (sắt, phản chiếu ánh sáng), đầu hổ ở vai, áo lót dài tới gối cổ tròn, lót bông mùa đông. Hình trên tượng dày hoa và dải lụa, nghiêng về nghi lễ hơn là chiến trận. Sử Trần không gọi tên loại giáp này; sử chỉ chép các vua nhiều lần xin giáp Tống (1009, Lê Long Đĩnh xin áo giáp, mũ trụ). Chưa rõ giáp Đại Việt có phần che cổ kiểu Tống hay không.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com) (giáp thời Trần chưa có bằng chứng — cần kiểm)"
+   },
+   {
+    "title": "Trang phục múa giá chi vũ (phù điêu chùa Hòa Long)",
+    "text": "Phù điêu thời Trần ở chùa Hòa Long: hai người múa đội khăn quấn có vành vểnh lên, đeo trang sức cổ, ngực trần, thắt lụa ở eo, váy xếp, giày thêu; múa giá chi vũ (một dạng múa Hồ từ Trung Á qua Đường). Sách nhạc Trung Hoa: người múa mặc áo chẽn tay dài bằng lụa, thắt dải eo, giày thêu, khăn vành vểnh, cầm chuông lắc. Thơ Nhân Tông nhắc giá chi vũ — dùng khi tiếp sứ. Toàn thư 1269 cũng chép Thánh Tông và Quốc Khang múa điệu Hồ trước Thượng hoàng.",
+    "ref": "Đại Việt cổ phong, \"Trang phục và trang sức thời Lý–Trần qua tư liệu khảo cổ học\" (daivietcophong.com); Toàn thư Q.V (1269)",
+    "year": 1269
+   },
+   {
+    "title": "Vẽ mình bằng chàm (Việt Nam Sử Lược)",
+    "text": "Từ xưa vua An Nam có tục lấy chàm vẽ rồng vào đùi. Thượng hoàng Nhân Tông bảo Anh Tông phải theo tục \"để nhớ gốc ngày xưa\"; Anh Tông vâng mệnh nhưng lừa lúc Thượng hoàng bận thì lẩn đi không cho vẽ — từ đó vua không vẽ mình nữa. Năm 1323 cấm quân sĩ vẽ mình như trước, nước ta bỏ thói vẽ mình từ đấy. (Vì vậy với năm 1285 vẫn đúng: vua và quân đều có hình xăm rồng, nằm trên da, dưới áo.)",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, I. Trần Anh Tông và II. Trần Minh Tông",
+    "year": 1323
+   },
+   {
+    "title": "Vẽ mình — gốc tục (Việt Nam Sử Lược)",
+    "text": "Sách chép người Việt có thói vẽ mình từ thời vua bắt dân lấy chàm vẽ mình để tránh thuồng luồng làm hại; thói ấy mãi đến đời Anh Tông nhà Trần mới bỏ.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), chú thích ở phần Họ Hồng Bàng và Nhà Trần"
+   },
+   {
+    "title": "Quân Tống của Triệu Trung ở Hàm Tử (1285)",
+    "text": "Triệu Trung là tướng nhà Tống sang theo Trần Nhật Duật; quân của ông mặc áo, đeo cung như quân Tống. Khi giáp trận quân Nguyên thấy tưởng nhà Tống đã khôi phục, sang cứu An Nam, nên sợ hãi bỏ chạy (Việt Nam Sử Lược). Toàn thư cũng chép việc quân Tống mặc áo Tống và lời Thượng hoàng dặn gọi họ là \"quân Thát\" vì y phục giống nhau.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 8; Toàn thư Q.V (1285)",
     "year": 1285
    }
   ],
@@ -8710,6 +9088,24 @@
     "title": "Chữ viết trên cờ, bảng, bia: chữ Hán",
     "text": "Triều Trần dùng chữ Hán làm văn tự chính thức; quốc hiệu Đại Việt viết 大越. Mọi dòng chữ trong hình (cờ, biển, bia, ấn) phải là chữ Hán, không dùng chữ Latin hay quốc ngữ. Sách không mô tả chữ ghi trên cờ quân nói chung: chữ 陳 (Trần) trên cờ là gợi ý thiết kế, chưa có nguồn trong sách.",
     "ref": "Kiến thức chung về văn tự thời Trần; chữ trên cờ quân chưa có nguồn trong sách — cần kiểm"
+   },
+   {
+    "title": "Cọc Bạch Đằng — chi tiết theo Việt Nam Sử Lược",
+    "text": "Cọc gỗ đẽo nhọn, bịt sắt, đóng khắp giữa dòng sông Bạch Đằng ở thượng lưu; chờ lúc nước triều lên nhử thuyền giặc qua, triều xuống thì quay lại đánh (Toàn thư chép cọc phủ cỏ).",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên II, mục 4; đối chiếu Toàn thư Q.V (1288)",
+    "year": 1288
+   },
+   {
+    "title": "Chiếc thuyền rồng nghi binh",
+    "text": "Hưng Đạo sai một tướng dẫn chiếc thuyền rồng ra cửa biển Ngọc Sơn để nghi binh; quân Nguyên (Lý Hằng, Khoan Triệt) do thám biết là giả mới đuổi theo, vua đi đường khác.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Giặc nhà Nguyên I, mục 6",
+    "year": 1285
+   },
+   {
+    "title": "Bia Minh Tông đi Ai Lao (1335)",
+    "text": "Bia khắc trên núi do Nguyễn Trung Ngạn soạn: chữ to bằng bàn tay, khắc vào đá sâu một tấc; ghi việc Thượng hoàng đi tuần cõi tây, Ai Lao chạy trốn. VNSL cho rằng lời bia nói quá, thực tế quân ta chưa ra khỏi cõi.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai, II–III",
+    "year": 1335
    }
   ],
   "customs_institutions": [
@@ -9600,6 +9996,52 @@
     "text": "Hồi quốc sơ quân sĩ xăm rồng hoa 'thái long' ở bụng, lưng, hai bắp đùi (dòng vua xăm đùi, thôi từ Anh Tông). Là hình xăm dưới da: chỉ thấy khi để trần, không phải hoa văn trên áo; nét nhỏ, cách điệu.",
     "ref": "Q.VI, năm 1299",
     "year": 1299
+   },
+   {
+    "title": "Dân hạng, thuế thân, thuế ruộng",
+    "text": "Con trai từ 18 tuổi vào hạng tiểu hoàng nam, 20 tuổi đại hoàng nam, 60 tuổi trở lên là lão hạng. Thuế thân theo số ruộng: 1–2 mẫu nộp 1 quan, 3–4 mẫu nộp 2 quan, từ 5 mẫu nộp 3 quan; không ruộng thì miễn. Thuế ruộng bằng thóc 100 thăng mỗi mẫu; ruộng công có ruộng quốc khố (hạng nhất 6 thạch 80 thăng, nhì 4 thạch, ba 3 thạch mỗi mẫu) và thác điền; ruộng ao công dân mỗi mẫu ba thăng; ruộng muối nộp bằng tiền; còn có thuế trầu cau, hương, tôm cá, rau quả (theo \"có sách chép\").",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 4",
+    "year": 1242
+   },
+   {
+    "title": "Hình luật Trần (qua Phan Huy Chú)",
+    "text": "Năm 1244 Thái Tông định lại luật nhưng sử không nói rõ. Theo Lịch triều hiến chương loại chí, người phạm tội trộm cắp bị chặt tay, chặt chân hoặc cho voi giày; hình luật rất nặng.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 7 (trích Phan Huy Chú)",
+    "year": 1244
+   },
+   {
+    "title": "Quân lính theo Việt Nam Sử Lược",
+    "text": "Dân tráng đều phải đi lính; các quân vương ai cũng được mộ tập quân nên khi Mông Cổ sang nước Nam có hơn 20 vạn quân. Năm 1228 làm lại trường tịch như lệ Lý (làng khai quan văn, quan võ, thư lại, lính, hoàng nam, lão, tàn tật, ngụ cư). Thánh Tông tuyển đinh tráng các lộ làm lính, chia quân ngũ ra làm quân và đô: mỗi quân 30 đô, mỗi đô 80 người, bắt luyện tập luôn. Năm 1253 lập Giảng võ đường luyện võ nghệ.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 3, 9; Trần Thánh Tông, mục 1",
+    "year": 1258
+   },
+   {
+    "title": "Điền trang (trang hộ) của vương hầu",
+    "text": "Thánh Tông bắt các vương hầu, phò mã chiêu tập người nghèo đói lưu lạc để khai khẩn ruộng hoang làm trang hộ; điền trang có từ đấy.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông, mục 1",
+    "year": 1266
+   },
+   {
+    "title": "Vua quan thân cận, yến tiệc múa hát",
+    "text": "Đời Trần vua quan thân cận nhau: khi vua đãi yến, các quan uống rượu xong thì dắt tay nhau múa hát, không giữ lễ nghiêm như các đời sau. Thánh Tông cho các hoàng thân vào nội điện cùng ăn một mâm, nằm một giường, chỉ khi ra việc công hoặc buổi chầu mới phân thứ tự.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thái Tông, mục 8; Trần Thánh Tông, mục 1"
+   },
+   {
+    "title": "Hôn nhân trong họ",
+    "text": "Việt Nam Sử Lược nhận xét nhà Trần cô cháu, anh em trong họ cứ lấy lẫn nhau, trái với thế tục (ví dụ Thủ Độ ép Thái Tông lấy vợ có thai của anh).",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ ba, kết luận"
+   },
+   {
+    "title": "Triều chính thời Anh Tông",
+    "text": "Việt Nam Sử Lược nhận xét Anh Tông hiếu thảo, thông minh nên việc triều chính có cương kỷ, có nhiều danh thần (Trương Hán Siêu, Phạm Ngũ Lão, Mạc Đĩnh Chi, Nguyễn Trung Ngạn, Chu Văn An, Đoàn Nhữ Hài); sách gọi là \"một thời rất thịnh về đời nhà Trần\".",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, thời kỳ thứ hai",
+    "year": 1293
+   },
+   {
+    "title": "Sử học và văn học",
+    "text": "Lê Văn Hưu soạn xong Đại Việt sử (30 quyển, từ Triệu Võ Vương đến Lý Chiêu Hoàng) năm 1272; năm 1253 Thái Tông lập Quốc học viện và Giảng võ đường; Nguyễn Thuyên (đổi họ Hàn) dùng chữ Nôm làm thơ phú, gọi là Hàn luật. Hịch của Hưng Đạo, thơ của Quang Khải và Phạm Ngũ Lão là văn có khí lực mạnh.",
+    "ref": "Việt Nam Sử Lược (Trần Trọng Kim), Nhà Trần, Trần Thánh Tông, mục 1; Nhân Tông, mục 2",
+    "year": 1272
    }
   ]
  }
