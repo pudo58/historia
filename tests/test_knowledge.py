@@ -27,7 +27,7 @@ def test_role_lines_are_added_only_when_the_scene_mentions_that_role(tmp_path):
     court = knowledge.visual_for_scene(pack, {'visual_prompt': 'A king hands a seal to a child.', 'narration': ''})
     assert 'yellow robe' in court and 'ding' not in court and 'tattoo' not in court
     field = knowledge.visual_for_scene(pack, {'visual_prompt': 'Soldiers march at dawn.', 'narration': 'Quân ta xuất trận.'})
-    assert 'tattoo' in field and 'yellow robe' not in field
+    assert '殺韃' in field and 'yellow robe' not in field
     assert knowledge.visual_for_scene(None, {'visual_prompt': 'x'}) == ''
 
 
@@ -150,3 +150,17 @@ def test_comfy_failure_detail_names_an_external_interrupt():
     from studio.backend import comfy_failure_detail
     text = comfy_failure_detail({'status_str': 'error', 'messages': [['execution_interrupted', {'node_id': '3'}]]})
     assert 'ngắt từ bên ngoài' in text and 'không phải do thiếu VRAM' in text
+
+
+def test_inscriptions_are_chinese_characters_and_tattoos_follow_the_chronicle(tmp_path):
+    pack = knowledge.load(tmp_path, 'tran')
+    assert '大越' in pack['visual'] and 'Chinese characters' in pack['visual']
+    forearm = knowledge.visual_for_scene(pack, {'visual_prompt': 'Close shot of a soldier forearm tattooed with two ink characters', 'narration': '', 'title': 'Hai chữ Sát Thát'})
+    assert '殺韃' in forearm and 'Sat That' not in forearm and 'dragon' not in forearm
+    flags = knowledge.visual_for_scene(pack, {'visual_prompt': 'war boats with banners on the river', 'narration': ''})
+    assert '陳' in flags and '破彊敵報皇恩' not in flags
+    assert '破彊敵報皇恩' in knowledge.visual_for_scene(pack, {'visual_prompt': 'Prince Hoai Van unfurls his flag', 'narration': ''})
+    bare = knowledge.visual_for_scene(pack, {'visual_prompt': 'A bare-chested boatman pulls the oar', 'narration': ''})
+    assert 'dragon' in bare and 'bare skin' in bare
+    titles = [f['title'] for f in knowledge.load(tmp_path, 'tran')['facts']['customs_institutions']]
+    assert any('殺韃' in t for t in titles)

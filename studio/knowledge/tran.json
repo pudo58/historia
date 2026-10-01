@@ -4,7 +4,7 @@
  "period": "1225–1400",
  "status": "Bản nháp: ~1.500 mục trích tự động từ Đại Việt sử ký toàn thư (kỷ nhà Trần, Q.V–VIII), mỗi mục có quyển và năm. Có thể sót hoặc lệch năm; cần người kiểm sử duyệt trước khi dùng cho phim công bố.",
  "script": "TỔNG QUAN: Nhà Trần (1225–1400). Vua nhường ngôi sớm cho thái tử rồi làm Thái thượng hoàng, vẫn cùng nắm việc nước. Các đời vua theo sách: Thái Tông (từ 1225; nhường ngôi 1258), Thánh Tông (1258–), Nhân Tông (–1293), Anh Tông (1293–1313), Minh Tông (1313/14–1329), Hiến Tông (1329–1341), Dụ Tông (1341–1369), Dương Nhật Lễ (1369–70), Nghệ Tông (1370–), Duệ Tông (–1377), Phế Đế/Giản Hoàng (1377–1388), Thuận Tông (1388–1398), Thiếu Đế (1398–1400); sau đó Hồ Quý Ly cướp ngôi, đặt quốc hiệu Đại Ngu (1400). XƯNG HÔ: người trong triều gọi vua là 'Quan gia'; vua đã nhường ngôi là 'Thượng hoàng' (tôn hiệu dài, ví dụ 'Hiển Nghiêu Thánh Thọ Thái Thượng Hoàng Đế'); vua mới tự xưng hiệu (Nhân Hoàng, Anh Hoàng, Ninh Hoàng…). Triều Nguyên gọi nước ta là An Nam. Niên hiệu đổi theo từng đời: Kiến Trung (1225), Thiệu Long (1258), Thiệu Bảo (1279), Trùng Hưng (từ tháng 9/1285), Hưng Long (1293), Khai Thái (1324), Khai Hựu (1329), Thiệu Phong (1341), Xương Phù (1377), Quang Thái (1388), Kiến Tân (1398). ĐỊA DANH: kinh sư Thăng Long; phủ Thiên Trường (Thượng hoàng ở cung Trùng Quang, vua ở cung Trùng Hoa, chùa Phổ Minh phía tây – xây 1262); điện Đại Minh (cửa Hữu Lang), điện Thiên An, Long Trì, cung Thánh Từ, cung Quan Triều, điện Diên Hiền, gác Nguyên Huyền, cửa Đại triều phía Tây, cửa Hoàng Phúc, các Đoan Minh; hành lang dài 1368 từ gác Nguyên Huyền đến cửa Đại triều. Đền Đồng Cổ, Quốc học viện (1253), cầu Lâm Ba ở chùa Chân Giáo (1248). Cuối triều Hồ Quý Ly dời về thành An Tôn (Thanh Hóa, 1397). TRANG PHỤC (tóm tắt, chi tiết ở mục dress_appearance): mũ chữ đinh đen cho quan văn võ (1300), ống tay áo rộng 9 tấc đến 1 thước 2, không mặc xiêm; vua áo tràng vạt bằng màu vàng, mũ có thao; vương hầu mũ triều thiên (tóc dài) hoặc mũ bao (tóc ngắn); thị vệ mũ bồn hoa; quân xăm: rồng ở bụng/lưng/đùi (đầu triều), hai chữ 'Sát Thát' ở cánh tay (1285), ba chữ đen ở trán (quân túc vệ, 1374); dân thuyền áo ngắn nón lá, nón Ma Lôi đan tre. Các chiếu cấm mặc áo, chải đầu theo người phương Bắc (1370, 1374) cho thấy trang phục Đại Việt cố ý khác Trung Hoa. Quy chế 1396 (thời Hồ Quý Ly nắm quyền) phân màu áo theo phẩm: tía, đỏ thẫm, hồng nhạt, xanh lục, xanh biếc, xanh. LƯU Ý: Toàn thư là sử biên niên; mô tả kiến trúc và hình dáng người rất ít. Các dòng về mái ngói, nền cao… là suy luận chung, chưa có nguồn trong sách. Người viết kịch bản chỉ dùng các mục được cung cấp kèm theo (kiến thức liên quan được chọn theo từng chương) và không bịa thêm.",
- "visual": "Dai Viet (Vietnam) under the Tran dynasty, 13th-14th century, a historically grounded Vietnamese court, not a generic Chinese palace; the court itself forbade copying Northern (Chinese) clothing and hairstyles. Timber-framed halls with tiled roofs, covered corridors linking halls, palace gardens with rock ponds, pine and bamboo; rivers with wooden war boats and banners; whitewashed roadside rest-pavilions. No Forbidden-City yellow-glazed roofs, no Qing or Ming costume.",
+ "visual": "Dai Viet (Vietnam) under the Tran dynasty, 13th-14th century, a historically grounded Vietnamese court, not a generic Chinese palace; the court itself forbade copying Northern (Chinese) clothing and hairstyles. Timber-framed halls with tiled roofs, covered corridors linking halls, palace gardens with rock ponds, pine and bamboo; rivers with wooden war boats and banners; whitewashed roadside rest-pavilions. No Forbidden-City yellow-glazed roofs, no Qing or Ming costume. WRITING: the realm used Chinese characters (chu Han); any writing visible in a picture (banner, signboard, plaque, seal, characters inked on a forearm) is traditional Chinese characters only, set in vertical columns on banners. The name of the realm is written 大越.",
  "roles": [
   {
    "name": "Vua",
@@ -83,9 +83,13 @@
     "boat",
     "ship",
     "battle",
-    "war"
+    "war",
+    "tattoo",
+    "xăm",
+    "thích",
+    "殺韃"
    ],
-   "text": "Vietnamese soldiers carry dragon tattoos on belly, back and thighs, and two characters 'Sat That' inked on the forearm; wooden river warships with banners, stakes driven into the river bed, bows, crossbows, spears; no medieval European or Mongol armor on the Vietnamese side."
+   "text": "Vietnamese soldiers of 1285 have two small Chinese characters 殺韃 inked in black on the bare forearm, hand-sized, visible only where the sleeve is short or rolled up; the shirt itself is plain with nothing printed on it. Wooden river warships with banners, stakes driven into the river bed, bows, crossbows, spears; no medieval European or Mongol armor on the Vietnamese side."
   },
   {
    "name": "Tướng / chỉ huy",
@@ -141,9 +145,65 @@
     "nguyên"
    ],
    "text": "Yuan envoys and invading troops appear in northern-style dress distinct from the Vietnamese court; Song refugees fighting with the Vietnamese wear Song-style clothes."
+  },
+  {
+   "name": "Xăm rồng (thái long)",
+   "keywords": [
+    "dragon tattoo",
+    "thái long",
+    "bare-chested",
+    "shirtless",
+    "bare torso",
+    "cởi trần",
+    "xăm rồng"
+   ],
+   "text": "A small stylised dragon (the 'thai long') is inked in dark ink on the bare skin of the belly, back or thigh of a bare-chested soldier, boatman or prince; people wearing shirts and robes have plain clothing with no pattern of this kind."
+  },
+  {
+   "name": "Cờ / biểu ngữ",
+   "keywords": [
+    "flag",
+    "banner",
+    "standard",
+    "ensign",
+    "pennant",
+    "cờ",
+    "biểu ngữ",
+    "lá cờ"
+   ],
+   "text": "Banners are plain rectangular or swallow-tail cloth on a pole, red, yellow or white, usually without writing; if a banner carries writing it is a single column of Chinese characters, for example the one character 陳."
+  },
+  {
+   "name": "Chữ Hán / bảng / quốc hiệu",
+   "keywords": [
+    "inscription",
+    "signboard",
+    "plaque",
+    "tablet",
+    "sign",
+    "seal",
+    "calligraphy",
+    "chữ hán",
+    "quốc hiệu",
+    "đại việt",
+    "bảng",
+    "biển",
+    "bia"
+   ],
+   "text": "Signboards, plaques, steles and seals carry traditional Chinese characters, for example 大越, the name of the realm."
+  },
+  {
+   "name": "Cờ Phá cường địch",
+   "keywords": [
+    "quốc toản",
+    "hoài văn",
+    "quoc toan",
+    "hoai van"
+   ],
+   "text": "The flag of Prince Hoai Van (Tran Quoc Toan) carries six Chinese characters in a vertical column: 破彊敵報皇恩."
   }
  ],
- "avoid": "Chinese imperial dragon robe (Qing style), queue hairstyle, Ming or Qing winged official hats, Forbidden City yellow glazed roofs, nine-storey pagodas, Japanese or Korean costume, European armor, modern objects, copying Northern (Chinese) clothing or hairstyle.",
+ "avoid": "Chinese imperial dragon robe (Qing style), queue hairstyle, Ming or Qing winged official hats, Forbidden City yellow glazed roofs, nine-storey pagodas, Japanese or Korean costume, European armor, modern objects, copying Northern (Chinese) clothing or hairstyle, Latin letters, English words or quoc ngu text anywhere in the image (on clothing, flags, signs or skin), a dragon or any pattern printed on the cloth of a shirt as if it were a tattoo, a large imperial Chinese dragon.",
  "sources": [
   {
    "claim": "Quan văn võ đội mũ chữ đinh đen; tụng quan đội mũ toàn hoa xanh; ống tay áo rộng 9 tấc đến 1 thước 2; không mặc xiêm",
@@ -216,6 +276,10 @@
   {
    "claim": "Kiến trúc cụ thể của cung điện (mái, cột, màu sắc): sách không mô tả. Dòng 'visual' về mái ngói cong, nền cao, hành lang là suy luận chung, cần đối chiếu tài liệu khảo cổ Hoàng thành Thăng Long",
    "ref": "Chưa có nguồn trong sách — cần kiểm"
+  },
+  {
+   "claim": "Chữ Hán trên hình: 殺韃 ở cánh tay (Toàn thư 1285), 破彊敵報皇恩 trên cờ Trần Quốc Toản, 大越 là quốc hiệu; chữ 陳 trên cờ quân là gợi ý thiết kế",
+   "ref": "Đại Việt sử ký toàn thư, Q.V (1285); phần còn lại chưa có nguồn trong sách — cần kiểm"
   }
  ],
  "facts": {
@@ -8635,6 +8699,17 @@
     "text": "Vua đề thơ 'Cối Kê... Hoan Diễn'",
     "ref": "Q.V, năm 1284",
     "year": 1284
+   },
+   {
+    "title": "Cờ của Hoài Văn hầu Trần Quốc Toản",
+    "text": "Cờ viết sáu chữ 'Phá cường địch, báo hoàng ân' (Hán: 破彊敵報皇恩): phá giặc mạnh, báo ơn vua. Chữ Hán, cột dọc trên cờ.",
+    "ref": "Q.V, đời Nhân Tông (trước 1285)",
+    "year": 1285
+   },
+   {
+    "title": "Chữ viết trên cờ, bảng, bia: chữ Hán",
+    "text": "Triều Trần dùng chữ Hán làm văn tự chính thức; quốc hiệu Đại Việt viết 大越. Mọi dòng chữ trong hình (cờ, biển, bia, ấn) phải là chữ Hán, không dùng chữ Latin hay quốc ngữ. Sách không mô tả chữ ghi trên cờ quân nói chung: chữ 陳 (Trần) trên cờ là gợi ý thiết kế, chưa có nguồn trong sách.",
+    "ref": "Kiến thức chung về văn tự thời Trần; chữ trên cờ quân chưa có nguồn trong sách — cần kiểm"
    }
   ],
   "customs_institutions": [
@@ -9513,6 +9588,18 @@
     "text": "Thơ Quang Khải, Thượng hoàng; Chiêu Văn đồng tử",
     "ref": "Q.V, năm 1285",
     "year": 1285
+   },
+   {
+    "title": "Chữ Sát Thát (殺韃) thích ở cánh tay",
+    "text": "Quân ta thích hai chữ 'Sát Thát' (Hán: 殺韃) bằng mực vào cánh tay; quân Nguyên bắt được thấy ai cũng có thì giết rất nhiều. Là chữ Hán nhỏ, xăm trên da cánh tay, không thêu hay in lên áo. Đỗ Khắc Chung giơ tay có chữ đó khi nói với Ô Mã Nhi.",
+    "ref": "Q.V, năm 1285",
+    "year": 1285
+   },
+   {
+    "title": "Xăm rồng 'thái long' chỉ nằm trên da",
+    "text": "Hồi quốc sơ quân sĩ xăm rồng hoa 'thái long' ở bụng, lưng, hai bắp đùi (dòng vua xăm đùi, thôi từ Anh Tông). Là hình xăm dưới da: chỉ thấy khi để trần, không phải hoa văn trên áo; nét nhỏ, cách điệu.",
+    "ref": "Q.VI, năm 1299",
+    "year": 1299
    }
   ]
  }
