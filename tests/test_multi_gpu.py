@@ -297,3 +297,12 @@ def test_install_options_of_a_second_process_on_gpu_zero(client, monkeypatch):
     installs.patch(first, 'verified')
     suggested = asyncio.run(installs.discover(lanes[2]['id']))['suggested_options']
     assert (suggested['gpu_index'], suggested['instance'], suggested['remote_port']) == (0, 1, 8192)
+
+
+def test_options_saved_before_shared_gpus_still_match():
+    """Install snapshots from before the 'instance' option must keep comparing equal, or proven installs look unproven."""
+    options = HostOptions(root='/workspace/historia', remote_port=8190, gpu_index=1)
+    old_snapshot_options = {k: v for k, v in options.model_dump().items() if k != 'instance'}
+    assert options.model_dump() == old_snapshot_options
+    assert HostOptions(root='/workspace/historia', gpu_index=0, instance=1).model_dump()['instance'] == 1
+    assert HostOptions.model_validate_json(options.model_dump_json()).model_dump() == options.model_dump()

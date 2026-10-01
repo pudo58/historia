@@ -152,6 +152,14 @@ class HostOptions(BaseModel):
     # Second, third… ComfyUI on the same GPU (own port, marker and log).
     instance: int = Field(default=0, ge=0, le=7)
 
+    def model_dump(self, **kwargs):
+        value = super().model_dump(**kwargs)
+        # Option snapshots saved before processes could share a GPU have no "instance"; a default of 0 must
+        # not change what is compared against them, or every earlier install would look unverified.
+        if not value.get('instance'):
+            value.pop('instance', None)
+        return value
+
     @property
     def comfy_root(self) -> str:
         return self.comfy_path or self.root + '/ComfyUI'
