@@ -1,3 +1,4 @@
+from sqlalchemy import select
 import pytest
 from fastapi.testclient import TestClient
 
@@ -95,3 +96,35 @@ def test_clear_refuses_while_work_is_running(tmp_path):
         session.commit()
     with pytest.raises(ValueError, match='Lượt sản xuất'):
         service.clear_render_data(project['id'])
+
+
+def test_clear_needs_an_explicit_yes_for_abandoned_jobs_with_unknown_gpu_state(tmp_path):
+    made, service, project, scene, ids = build(tmp_path)
+    with service.sessions() as session:
+        job = session.get(Job, ids['image_job'])
+        job.status = 'abandoned'
+        job.result = {'submissions': [{'clip': 1, 'state': 'submitted'}]}
+        run = session.scalars(select(ProductionRun)).first()
+        run.status = 'abandoned'
+        session.commit()
+    before = counts(service)
+    with pytest.raises(ValueError, match='chưa đối chiếu'):
+        service.clear_render_data(project['id'])
+    assert counts(service) == before
+    response = TestClient(made).post(f"/api/studio/projects/{project['id']}/clear-render-data", json={})
+    assert response.status_code in {409, 422} and 'chưa đối chiếu' in response.json()['detail']
+    result = TestClient(made).post(f"/api/studio/projects/{project['id']}/clear-render-data",
+                                   json={'accept_unknown_remote': True}).json()
+    assert result['unknown_remote_jobs'] == 1 and result['runs'] == 1
+    assert counts(service) == (1, 0, 0, 0)
+
+
+def test_clear_never_overrides_a_job_that_is_still_reconciling(tmp_path):
+    made, service, project, scene, ids = build(tmp_path)
+    with service.sessions() as session:
+        job = session.get(Job, ids['image_job'])
+        job.status = 'reconciling'
+        job.result = {'submissions': [{'clip': 1, 'state': 'submitted'}]}
+        session.commit()
+    with pytest.raises(ValueError, match='đang chạy hoặc đang đối chiếu'):
+        service.clear_render_data(project['id'], accept_unknown_remote=True)

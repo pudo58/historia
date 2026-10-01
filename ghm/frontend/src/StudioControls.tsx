@@ -9,24 +9,29 @@ export function DeleteControl({name, description, onDelete, disabled = false}: {
   return <><button className="danger" disabled={disabled} onClick={()=>{setTyped('');setError('');dialog.current?.showModal();}}>Xóa {name}</button><dialog ref={dialog} className="confirm-dialog" onCancel={e=>{if(pending)e.preventDefault();}} aria-label={`Xác nhận xóa ${name}`}><form onSubmit={async e=>{e.preventDefault();setPending(true);setError('');try {await onDelete();dialog.current?.close();}catch(err){setError((err as Error).message);}finally{setPending(false);}}}><p className="eyebrow">THAO TÁC KHÔNG THỂ HOÀN TÁC</p><h2>Xóa {name}?</h2><p>{description}</p><div className="alert warning">Sao lưu dữ liệu cần giữ trước khi tiếp tục. Máy chủ sẽ từ chối nếu vẫn còn tác vụ cần xử lý.</div><label className="field"><span>Nhập chính xác <strong>{name}</strong> để xác nhận</span><input autoFocus value={typed} onChange={e=>setTyped(e.target.value)} autoComplete="off" disabled={pending}/></label>{error && <p role="alert" className="warning-text">{error}</p>}<div className="actions"><button type="button" disabled={pending} onClick={()=>dialog.current?.close()}>Giữ lại</button><button className="danger" disabled={pending || typed!==name}>{pending?'Đang xóa…':'Tôi xác nhận xóa'}</button></div></form></dialog></>;
 }
 
-export type ClearResult = {runs:number;jobs:number;artifacts:number;files_removed:number;megabytes_freed:number;kept_speech:boolean};
-export function ClearRenderControl({disabled, hint, onClear}: {disabled:boolean; hint?:string; onClear:(keepSpeech:boolean)=>Promise<ClearResult|undefined>}) {
+export type ClearResult = {runs:number;jobs:number;artifacts:number;files_removed:number;megabytes_freed:number;kept_speech:boolean;unknown_remote_jobs?:number};
+export function ClearRenderControl({disabled, hint, onClear}: {disabled:boolean; hint?:string; onClear:(keepSpeech:boolean,acceptUnknownRemote:boolean)=>Promise<ClearResult|undefined>}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [typed,setTyped] = useState('');
   const [keepSpeech,setKeepSpeech] = useState(false);
   const [pending,setPending] = useState(false);
   const [done,setDone] = useState<ClearResult|null>(null);
+  const [failure,setFailure] = useState('');
+  const [acceptRemote,setAcceptRemote] = useState(false);
+  const needsAccept = failure.includes('chưa đối chiếu');
   return <section className="danger-zone clear-render"><h3>Làm lại từ đầu</h3><p>Xóa toàn bộ dữ liệu đã render của dự án này: các lượt sản xuất, nhật ký tác vụ, ảnh, clip, bản nội suy và phim đã xuất (cùng các tệp trong kho local). Kịch bản, cảnh, tư liệu, ảnh tham chiếu và thiết lập được giữ nguyên. Không động tới máy GPU.</p>
     {hint && <p className="warning-text">{hint}</p>}
     {done && <div className="alert notice" role="status">Đã xóa {done.runs} lượt sản xuất, {done.jobs} tác vụ, {done.artifacts} tệp kết quả ({done.megabytes_freed} MB){done.kept_speech?'; lời đọc được giữ lại':''}. Có thể tạo lượt sản xuất mới.</div>}
-    <button className="danger" disabled={disabled} onClick={()=>{setTyped('');setDone(null);dialog.current?.showModal();}}>Xóa dữ liệu render…</button>
+    <button className="danger" disabled={disabled} onClick={()=>{setTyped('');setDone(null);setFailure('');setAcceptRemote(false);dialog.current?.showModal();}}>Xóa dữ liệu render…</button>
     <dialog ref={dialog} className="confirm-dialog" onCancel={e=>{if(pending)e.preventDefault();}} aria-label="Xác nhận xóa dữ liệu render">
-      <form onSubmit={async e=>{e.preventDefault();setPending(true);try{const result=await onClear(keepSpeech);if(result){setDone(result);dialog.current?.close();}}finally{setPending(false);}}}>
+      <form onSubmit={async e=>{e.preventDefault();setPending(true);setFailure('');try{const result=await onClear(keepSpeech,acceptRemote);if(result){setDone(result);dialog.current?.close();}}catch(error){setFailure((error as Error).message);}finally{setPending(false);}}}>
         <p className="eyebrow">THAO TÁC KHÔNG THỂ HOÀN TÁC</p><h2>Xóa dữ liệu render?</h2>
         <p>Mọi ảnh, clip và phim đã tạo sẽ bị xóa khỏi máy này. Hãy tải về những gì cần giữ trước.</p>
         <label className="check"><input type="checkbox" checked={keepSpeech} onChange={e=>setKeepSpeech(e.target.checked)} disabled={pending}/> Giữ lại lời đọc đã tạo (không phải tạo giọng lại; ảnh và clip vẫn bị xóa)</label>
+        {failure && <div className="alert error" role="alert">{failure}</div>}
+        {needsAccept && <label className="check"><input type="checkbox" checked={acceptRemote} onChange={e=>setAcceptRemote(e.target.checked)} disabled={pending}/> Tôi hiểu GPU có thể còn prompt đã gửi mà app chưa đối chiếu được (chi phí không rõ). Vẫn xóa dữ liệu dự án; Pod không bị dừng hay xóa.</label>}
         <label className="field"><span>Gõ <strong>XÓA</strong> để xác nhận</span><input autoFocus value={typed} onChange={e=>setTyped(e.target.value)} autoComplete="off" disabled={pending}/></label>
-        <div className="actions"><button type="button" disabled={pending} onClick={()=>dialog.current?.close()}>Giữ lại</button><button className="danger" disabled={pending || typed.trim().toUpperCase()!=='XÓA'}>{pending?'Đang xóa…':'Xóa dữ liệu render'}</button></div>
+        <div className="actions"><button type="button" disabled={pending} onClick={()=>dialog.current?.close()}>Giữ lại</button><button className="danger" disabled={pending || typed.trim().toUpperCase()!=='XÓA' || (needsAccept && !acceptRemote)}>{pending?'Đang xóa…':'Xóa dữ liệu render'}</button></div>
       </form></dialog></section>;
 }
 

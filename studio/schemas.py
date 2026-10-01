@@ -147,6 +147,7 @@ class Approval(StrictModel):
 
 class ClearRenderData(StrictModel):
     keep_speech: bool = False
+    accept_unknown_remote: bool = False
 
 
 class RegenerateKeyframes(StrictModel):

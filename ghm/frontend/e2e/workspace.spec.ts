@@ -382,7 +382,31 @@ test('clear render data: needs the typed word, can keep the speech, and is block
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await expect.poll(()=>state.mutations).toEqual(['/api/studio/projects/p/clear-render-data']);
-  expect(state.bodies.at(-1)).toMatchObject({body:{keep_speech:true}});
+  expect(state.bodies.at(-1)).toMatchObject({body:{keep_speech:true,accept_unknown_remote:false}});
+});
+
+test('clear render data: shows the refusal inside the dialog and needs an explicit yes for unknown GPU state',async({page})=>{
+  const state=await reviewFixture(page);
+  state.run.status='abandoned';
+  const bodies:unknown[]=[];
+  await page.route('**/api/studio/projects/p/clear-render-data',route=>{
+    const body=route.request().postDataJSON();bodies.push(body);
+    if(!body.accept_unknown_remote)return route.fulfill({status:422,json:{detail:'Có 3 tác vụ đã bị bỏ hoặc lỗi mà GPU có thể còn prompt đã gửi nhưng chưa đối chiếu.'}});
+    return route.fulfill({json:{runs:1,jobs:3,artifacts:4,files_removed:4,megabytes_freed:1.2,kept_speech:false,unknown_remote_jobs:3}});
+  });
+  await page.goto('/?page=projects&project=p&tab=video');
+  await page.getByRole('button',{name:'Xóa dữ liệu render…'}).click();
+  const dialog=page.getByRole('dialog',{name:'Xác nhận xóa dữ liệu render'});
+  const confirm=dialog.getByRole('button',{name:'Xóa dữ liệu render'});
+  await dialog.getByRole('textbox').fill('XÓA');
+  await confirm.click();
+  await expect(dialog.getByRole('alert')).toContainText('chưa đối chiếu');
+  await expect(confirm).toBeDisabled();
+  await dialog.getByLabel(/Tôi hiểu GPU có thể còn prompt/).check();
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(page.getByRole('status').filter({hasText:'Đã xóa 1 lượt sản xuất, 3 tác vụ'})).toBeVisible();
+  expect(bodies).toEqual([{keep_speech:false,accept_unknown_remote:false},{keep_speech:false,accept_unknown_remote:true}]);
 });
 
 test('GPU page shows Vietnamese labels and translated backend errors',async({page},testInfo)=>{

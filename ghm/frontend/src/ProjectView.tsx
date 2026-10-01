@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, base, type Host, type Job, type Project, type Run, type Scene } from './api';
 import DialogueTest from './DialogueTest';
 import LegacyProjectView from './LegacyProjectView';
@@ -32,11 +32,12 @@ export default function ProjectView({project:p,hosts,jobs,run,busy,error,back}:{
   const approvalVersion=JSON.stringify([p.updated_at,p.scenes.map(s=>[s.id,s.revision])]);
   const requestKey=useRef(crypto.randomUUID());
   useEffect(()=>{setConsent(false);setUnsourcedConsent(false);requestKey.current=crypto.randomUUID();},[approvalVersion]);
+  const queryClient=useQueryClient();
   const runs=useQuery({queryKey:['production-runs',p.id],queryFn:()=>api<ProductionRun[]>(`${base}/projects/${p.id}/production-runs`),refetchInterval:3000});
   const latest=runs.data?.[0];
   const locked=!!latest && !['completed','failed','cancelled','paused','superseded','duration_review','abandoned'].includes(latest.status);
   const clearing=!!latest && ['running','pause_requested','reconciling'].includes(latest.status);
-  const clearControl=<ClearRenderControl disabled={busy || clearing} hint={clearing?'Tạm dừng lượt sản xuất và đợi nó dừng hẳn trước khi xóa.':undefined} onClear={keep=>run(()=>api<ClearResult>(`${base}/projects/${p.id}/clear-render-data`,{keep_speech:keep}))}/>;
+  const clearControl=<ClearRenderControl disabled={busy || clearing} hint={clearing?'Tạm dừng lượt sản xuất và đợi nó dừng hẳn trước khi xóa.':undefined} onClear={async(keep,accept)=>{const result=await api<ClearResult>(`${base}/projects/${p.id}/clear-render-data`,{keep_speech:keep,accept_unknown_remote:accept});await queryClient.invalidateQueries();return result;}}/>;
   const unsourced=p.scenes.filter(s=>!s.citations.length);
   const missing=p.scenes.filter(s=>!s.narration.trim() || !s.visual_prompt.trim());
   const reason=!p.host_id?'Chọn và lưu máy GPU ở bước Ý tưởng.':!p.scenes.length?'Thêm cảnh hoặc tạo kịch bản trước.':missing.length?`${missing.length} cảnh thiếu lời đọc hoặc mô tả hình.`:latest && ['running','pause_requested','paused','duration_review','reconciling','failed'].includes(latest.status) && latest.snapshot.scenes.length===p.scenes.length && latest.snapshot.scenes.every(s=>p.scenes.some(current=>current.id===s.id && current.revision===s.revision))?'Lượt sản xuất hiện tại cần xử lý: mở Video để tiếp tục, duyệt thời lượng hoặc sửa cảnh trước khi tạo lượt mới.':!consent?'Xác nhận kịch bản và chi phí GPU bên dưới.':unsourced.length && !unsourcedConsent?'Xác nhận nội dung chưa có nguồn trước khi sản xuất.':runs.error?'Không tải được trạng thái lượt sản xuất; thử kết nối lại trước.':'';

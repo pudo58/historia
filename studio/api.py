@@ -230,7 +230,7 @@ def router(service, jobs, host_lock):
 
     @api.post("/projects/{id}/clear-render-data")
     def clear_render_data(id: str, payload: ClearRenderData):
-        return service.clear_render_data(id, payload.keep_speech)
+        return service.clear_render_data(id, payload.keep_speech, payload.accept_unknown_remote)
 
     @api.get("/projects/{id}")
     def get_project(id: str):

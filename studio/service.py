@@ -94,12 +94,14 @@ class StudioService:
                      'clip_approved', 'rife_clip_ids', 'reuse_shot_keyframes', 'reuse_clip_ids', 'dialogue_speech')
     _SCENE_SPEECH = ('speech_id', 'duration', 'shot_count')
 
-    def clear_render_data(self, id: str, keep_speech: bool = False) -> dict:
+    def clear_render_data(self, id: str, keep_speech: bool = False, accept_unknown_remote: bool = False) -> dict:
         """Forget everything the pipeline produced for a project so it can be rendered again from scratch.
 
         Kept: project settings, sources/uploads and their frames, characters, outline and every scene's script.
         Removed: production runs, jobs and their logs, generated artifacts (speech unless ``keep_speech``, keyframes,
         clips, RIFE clips, the exported film) and the files behind them. Never contacts a GPU.
+        Jobs that were abandoned/failed/interrupted while a prompt may still sit on a GPU are only removed with
+        ``accept_unknown_remote`` (which also drops the guard that blocks new inference on that host).
         """
         from sqlalchemy import delete, text
 
@@ -113,10 +115,12 @@ class StudioService:
                     ProductionRun.status.in_(['running', 'pause_requested', 'reconciling']))):
                 raise ValueError('Lượt sản xuất đang chạy hoặc chờ đối chiếu. Tạm dừng và đợi nó dừng hẳn rồi mới xóa dữ liệu.')
             jobs = list(session.scalars(select(Job).where(Job.project_id == id)))
-            for job in jobs:
-                if job.status in {'queued', 'running', 'cancelling', 'reconciling'} or (
-                        job.status not in {'completed', 'cancelled'} and StudioJobs.remote_pending(job.result)):
-                    raise ValueError('Còn tác vụ đang chạy hoặc chưa đối chiếu với GPU. Dừng/đối chiếu xong rồi mới xóa dữ liệu.')
+            if any(j.status in {'queued', 'running', 'cancelling', 'reconciling'} for j in jobs):
+                raise ValueError('Còn tác vụ đang chạy hoặc đang đối chiếu với GPU. Dừng hoặc đợi nó xong rồi mới xóa dữ liệu.')
+            unknown = [j for j in jobs if j.status not in {'completed', 'cancelled'} and StudioJobs.remote_pending(j.result)]
+            if unknown and not accept_unknown_remote:
+                raise ValueError(f'Có {len(unknown)} tác vụ đã bị bỏ hoặc lỗi mà GPU có thể còn prompt đã gửi nhưng chưa đối chiếu. '
+                                 'Tick ô "Tôi hiểu…" rồi xóa nếu bạn chấp nhận bỏ qua phần đó (Pod không bị động tới).')
             scenes = list(session.scalars(select(Scene).where(Scene.project_id == id)))
             kept_jobs = {j.id for j in jobs if keep_speech and j.kind == 'speech' and j.status == 'completed'}
             kept_artifacts = set()
@@ -170,7 +174,8 @@ class StudioService:
             except OSError:
                 pass
         return {'runs': len(runs), 'jobs': len(doomed_jobs), 'artifacts': len(doomed), 'files_removed': removed,
-                'megabytes_freed': round(freed / 1_000_000, 1), 'kept_speech': keep_speech}
+                'megabytes_freed': round(freed / 1_000_000, 1), 'kept_speech': keep_speech,
+                'unknown_remote_jobs': len(unknown)}
 
     def project(self, id: str) -> dict:
         result = self.read(self.require(Project, id))
