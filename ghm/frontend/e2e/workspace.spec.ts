@@ -473,7 +473,7 @@ test('pod group: GPUs of one Pod are grouped and installed with one button, skip
   await page.route('**/api/studio/pod-groups',route=>route.fulfill({json:group()}));
   await page.route(/\/api\/studio\/hosts\/(g\d)\/installation(\/\w+)?$/,route=>{
     const [, id, step]=route.request().url().match(/hosts\/(g\d)\/installation(\/\w+)?$/)!;
-    if(step==='/discover'){calls.push('discover '+id);return route.fulfill({json:{paths:[],services:[],suggested_options:plan.options,transport:'ssh'}});}
+    if(step==='/discover'){calls.push('discover '+id);return route.fulfill({json:{paths:id==='g1'?['/workspace/ComfyUI']:[],services:id==='g1'?[{port:8188,version:'0.3'}]:[],suggested_options:plan.options,transport:'ssh'}});}
     if(step==='/prepare')return route.fulfill({json:plan});
     if(step==='/start'){calls.push('start '+id);status[id]='installed';return route.fulfill({json:{}});}
     return route.fulfill({json:{status:status[id],jobs:[]}});});

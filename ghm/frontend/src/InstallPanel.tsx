@@ -141,8 +141,11 @@ function PodGroupInstall({group}:{group:PodGroup}){
     if(!state.jobs.some(j=>active.includes(j.status))){
       setStage(`${label}: kiểm tra GPU và SSH…`);
       const d=await call<Discovery>(url+'/discover',{});
-      if(d.paths.length>1||d.services.length>1||((d.paths.length>0||d.services.length>0)&&!d.suggested_options.adopt_existing))
-        throw new Error(`${label}: phát hiện môi trường ComfyUI chưa xác định rõ. Cài riêng GPU này bằng cấu hình nâng cao.`);
+      // A multi-GPU Pod cannot share the template's single ComfyUI, so Historia installs its own beside it
+      // (own folder and port). That is only unsafe if something already listens on the port we would use.
+      const clash=d.services.some(x=>x.port===d.suggested_options.remote_port);
+      if(d.paths.length>1||d.services.length>1||d.suggested_options.adopt_existing||clash)
+        throw new Error(`${label}: phát hiện môi trường ComfyUI chưa xác định rõ (${d.paths.length} thư mục, ${d.services.length} dịch vụ đang chạy). Cài riêng GPU này bằng cấu hình nâng cao.`);
       setStage(`${label}: kiểm tra model và dung lượng…`);
       const prepared=await call<Plan>(url+'/prepare',d.suggested_options);
       if(prepared.blockers.length)throw new Error(`${label}: ${prepared.blockers.join(' ')}`);
