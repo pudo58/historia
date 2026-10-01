@@ -11,7 +11,8 @@ python = root / "venv/bin/python"
 gpu = c.get("gpu_index")
 # Lanes (one ComfyUI per GPU on the same install) each own a marker and log; the classic single
 # process keeps its historic file names.
-suffix = "" if gpu is None else f"-gpu{int(gpu)}"
+instance = int(c.get("instance") or 0)
+suffix = "" if gpu is None else f"-gpu{int(gpu)}" + (f"-i{instance}" if instance else "")
 marker = root / f".ghm-process{suffix}.json"
 action = c["action"]
 
@@ -92,11 +93,11 @@ async def manage(executor, options, action: str, args: list[str]):
     result = await executor.run_input(
         "python3 -c " + shlex.quote(SCRIPT),
         json.dumps({'root': options.root, 'port': options.remote_port, 'args': args, 'action': action,
-                    'gpu_index': options.gpu_index}),
+                    'gpu_index': options.gpu_index, 'instance': options.instance}),
         timeout=30,
     )
     if result.rc:
         # Remote traceback contains no submitted credentials.
         raise ValueError("Managed service action failed. Inspect " + options.root + "/comfyui" +
-                         ("" if options.gpu_index is None else f"-gpu{options.gpu_index}") + ".log and process ownership.")
+                         ("" if options.gpu_index is None else f"-gpu{options.gpu_index}" + (f"-i{options.instance}" if options.instance else "")) + ".log and process ownership.")
     return result.stdout

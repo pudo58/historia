@@ -20,6 +20,9 @@ class RunPodConnect(BaseModel):
     ssh_command: str = Field(default="", max_length=500)
     # Multi-GPU Pod: also create one Historia host ("lane") per extra GPU, all sharing this SSH endpoint.
     all_gpus: bool = False
+    # Extra ComfyUI processes on each GPU (needs the VRAM): a lone image spends most of its time uploading,
+    # waiting and downloading, so several processes keep the GPU busy.
+    per_gpu: int = Field(default=1, ge=1, le=4)
 
 
 class RunPodAction(BaseModel):
@@ -146,6 +149,8 @@ class HostOptions(BaseModel):
     # One ComfyUI per GPU on multi-GPU Pods: this host's ComfyUI is pinned to this GPU (--cuda-device).
     # Lanes of one Pod share `root` (models, venv) but use different `remote_port` values.
     gpu_index: int | None = Field(default=None, ge=0, le=15)
+    # Second, third… ComfyUI on the same GPU (own port, marker and log).
+    instance: int = Field(default=0, ge=0, le=7)
 
     @property
     def comfy_root(self) -> str:

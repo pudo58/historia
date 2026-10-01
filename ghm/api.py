@@ -476,21 +476,34 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                 pass
             seen = ssh_gpu([first])
         gpus = max(gpus, (seen.count if seen and seen.count else 0), 1)
-        lanes = await ensure_lanes(pod_id, first, gpus if payload.all_gpus else 1, pod["name"] or pod_id,
-                                   (address, port, username), key_path)
+        physical = gpus if payload.all_gpus else 1
+        if payload.per_gpu > 1:
+            vram = seen.vram_gb if seen and seen.vram_gb else None
+            # A running image or Wan stage can peak near 28 GB per ComfyUI process; refuse a count that cannot fit.
+            if vram is not None and vram < 28 * payload.per_gpu:
+                raise HTTPException(422, f"GPU {vram:g} GB VRAM chỉ đủ cho {max(1, int(vram // 28))} tiến trình ComfyUI mỗi GPU "
+                                         f"(mỗi tiến trình cần khoảng 28 GB lúc cao điểm). Chọn số nhỏ hơn.")
+            if vram is None:
+                raise HTTPException(409, "Chưa biết VRAM của GPU. Bấm \"Kiểm tra máy\" cho Pod này trước khi chạy nhiều tiến trình mỗi GPU.")
+        lanes = await ensure_lanes(pod_id, first, physical * payload.per_gpu, pod["name"] or pod_id,
+                                   (address, port, username), key_path, physical)
         return {"host": _to_read(service._require_host(first), service), "action": action,
                 "lanes": [_to_read(service._require_host(hid), service) for hid in lanes]}
 
-    async def ensure_lanes(pod_id: str, first: str, wanted: int, base_label: str, endpoint, key_path: str) -> list[str]:
+    async def ensure_lanes(pod_id: str, first: str, wanted: int, base_label: str, endpoint, key_path: str,
+                           physical: int | None = None) -> list[str]:
         """One Historia host per GPU of a Pod. They share the SSH endpoint and (later) the install root;
-        lane i>0 gets its own ComfyUI port and is pinned to GPU i when installed."""
+        lane i>0 gets its own ComfyUI port and is pinned to its GPU when installed. With ``physical`` GPUs, lane i
+        runs on GPU i % physical as ComfyUI process i // physical (several processes may share one GPU)."""
         address, port, username = endpoint
         lanes = [x for x in saved_lanes(pod_id) if service.get_host(x)]
         if not lanes or lanes[0] != first:
             lanes = [first]
         while wanted > 1 and len(lanes) < wanted:
             index = len(lanes)
-            host = service.create_host(HostCreate(label=f"{base_label} · GPU {index}", address=address, port=port,
+            gpu_no = index % (physical or wanted)
+            tag = f"GPU {gpu_no}" if index < (physical or wanted) else f"GPU {gpu_no} · tiến trình {index // (physical or wanted) + 1}"
+            host = service.create_host(HostCreate(label=f"{base_label} · {tag}", address=address, port=port,
                                                   username=username, auth_kind="private_key", secret=key_path))
             lanes.append(host.id)
         for index, host_id in enumerate(lanes):
@@ -500,7 +513,18 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
                     runner.assert_idle(host_id)
                     await tunnels.stop(host_id)
                     service.update_host(host_id, HostUpdate(address=address, port=port, username=username))
-            service.save_setting(f"host_lane:{host_id}", json.dumps({"pod_id": pod_id, "index": index, "first": first}))
+            share = physical or wanted
+            try:
+                old = json.loads(service.setting(f"host_lane:{host_id}") or "null")
+            except ValueError:
+                old = None
+            if isinstance(old, dict) and old.get("pod_id") == pod_id and isinstance(old.get("index"), int):
+                # Keep what an earlier connect decided; lanes made before processes could share a GPU ran one per GPU.
+                gpu_no, instance = old.get("gpu", old["index"]), old.get("instance", 0)
+            else:
+                gpu_no, instance = index % share, index // share
+            service.save_setting(f"host_lane:{host_id}", json.dumps({"pod_id": pod_id, "index": index, "first": first,
+                                                                    "gpu": gpu_no, "instance": instance}))
         service.save_setting(f"runpod_pod_lanes:{pod_id}", json.dumps(lanes))
         return lanes
 

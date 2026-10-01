@@ -26,9 +26,9 @@ time.sleep(60)
 '''
 
 
-def service(root, action, port, gpu=None, args=()):
+def service(root, action, port, gpu=None, args=(), instance=0):
     result = subprocess.run([sys.executable, '-c', SCRIPT], input=json.dumps(
-        {'root': str(root), 'port': port, 'args': list(args), 'action': action, 'gpu_index': gpu}),
+        {'root': str(root), 'port': port, 'args': list(args), 'action': action, 'gpu_index': gpu, 'instance': instance}),
         capture_output=True, text=True, timeout=30)
     return result
 
@@ -43,6 +43,7 @@ def root(tmp_path):
     yield tmp_path
     for gpu in (None, 0, 1):
         service(tmp_path, 'stop', 0, gpu)
+    service(tmp_path, 'stop', 0, 0, instance=1)
 
 
 def test_each_gpu_gets_its_own_process_marker_log_and_device(root):
@@ -221,3 +222,78 @@ def test_gpu_count_comes_from_the_machine_when_runpod_omits_it(client, monkeypat
     assert [h['label'] for h in result['lanes']] == ['two-a100', 'two-a100 · GPU 1']
     listing = client.get('/api/runpod/pods').json()['pods'][0]
     assert listing['gpu_count_known'] is True and listing['gpu_count'] == 2 and listing['gpu'] == 'A40'
+
+
+def test_second_process_on_one_gpu_has_its_own_marker_log_and_port(root):
+    assert service(root, 'start', 8191, gpu=0).returncode == 0
+    assert service(root, 'start', 8192, gpu=0, instance=1).returncode == 0
+    time.sleep(1)
+    assert (root / '.ghm-process-gpu0.json').exists() and (root / '.ghm-process-gpu0-i1.json').exists()
+    assert (root / 'comfyui-gpu0.log').exists() and (root / 'comfyui-gpu0-i1.log').exists()
+    assert (root / 'seen-8191.txt').read_text().startswith('0|') and (root / 'seen-8192.txt').read_text().startswith('0|')
+    assert service(root, 'stop', 8192, gpu=0, instance=1).returncode == 0
+    assert service(root, 'inspect', 8191, gpu=0).returncode == 0           # the first process keeps running
+
+
+def _preflight(client, host_id, vram):
+    hosts = client.app.state.host_service
+    host = hosts._require_host(host_id)
+    host.pinned_fingerprint = 'SHA256:x'
+    hosts._save(host)
+    with hosts._sessions() as session:
+        session.add(PreflightSnapshot(host_id=host_id, status='pass', payload=json.dumps({
+            'status': 'pass', 'ssh_mode': 'exec', 'checks': [],
+            'gpu': {'name': 'A100', 'vram_gb': vram, 'driver_version': '580.1', 'count': 2}})))
+        session.commit()
+
+
+def test_several_processes_per_gpu_need_known_and_sufficient_vram(client):
+    first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
+    unknown = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 2})
+    assert unknown.status_code == 409 and 'Kiểm tra máy' in unknown.json()['detail']
+    _preflight(client, first, 40)
+    too_many = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2})
+    assert too_many.status_code == 422 and '1 tiến trình' in too_many.json()['detail']
+    assert len(client.get('/api/hosts').json()) == 1
+
+
+def test_processes_sharing_a_gpu_become_lanes_pinned_to_that_gpu(client, monkeypatch):
+    first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
+    _preflight(client, first, 80)
+    over = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 3})
+    assert over.status_code == 422 and '2 tiến trình' in over.json()['detail']
+    lanes = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
+    assert [h['label'] for h in lanes] == ['two-a100', 'two-a100 · GPU 1', 'two-a100 · GPU 0 · tiến trình 2',
+                                           'two-a100 · GPU 1 · tiến trình 2']
+    again = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
+    assert [h['id'] for h in again] == [h['id'] for h in lanes] and len(client.get('/api/hosts').json()) == 4
+    studio = client.app.state.studio_jobs.installations
+    assert [studio.lane(h['id'])['gpu'] for h in lanes] == [0, 1, 0, 1]
+    assert [studio.lane(h['id'])['instance'] for h in lanes] == [0, 0, 1, 1]
+    # A later connect without the flags keeps what was decided.
+    client.post('/api/runpod/pods/duo/connect')
+    assert studio.lane(lanes[2]['id'])['instance'] == 1
+
+
+def test_install_options_of_a_second_process_on_gpu_zero(client, monkeypatch):
+    import asyncio
+
+    from studio.models import Installation
+    from studio.packs import PACK_ID
+    first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
+    _preflight(client, first, 80)
+    lanes = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
+    hosts, installs = client.app.state.host_service, client.app.state.studio_jobs.installations
+    for lane in lanes[1:]:
+        _preflight(client, lane['id'], 80)
+
+    async def no_preflight(_id):
+        return None
+    monkeypatch.setattr(hosts, 'preflight', no_preflight)
+    hosts.save_options(first, HostOptions(root='/workspace/historia', remote_port=8190))
+    with client.app.state.studio.sessions() as session:
+        session.add(Installation(host_id=first, pack_id=PACK_ID, status='not_installed', data={}))
+        session.commit()
+    installs.patch(first, 'verified')
+    suggested = asyncio.run(installs.discover(lanes[2]['id']))['suggested_options']
+    assert (suggested['gpu_index'], suggested['instance'], suggested['remote_port']) == (0, 1, 8192)

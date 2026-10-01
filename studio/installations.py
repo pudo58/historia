@@ -128,8 +128,8 @@ class Installations:
                                  'Cài lại GPU 0 ở chế độ Historia tự quản lý ComfyUI rồi thử lại.')
             if self.state(lane['first']).get('status') not in {'installed', 'verifying', 'verified', 'verify_failed'}:
                 raise ValueError('Cài bộ AI cho GPU 0 của Pod này trước. GPU 1+ dùng chung thư mục model nên chỉ cài thêm rất nhanh sau đó.')
-            options = HostOptions(root=base.root, adopt_existing=False, gpu_index=lane['index'],
-                                  remote_port=base.remote_port + lane['index'])
+            options = HostOptions(root=base.root, adopt_existing=False, gpu_index=lane.get('gpu', lane['index']),
+                                  instance=lane.get('instance', 0), remote_port=base.remote_port + lane['index'])
             return {'paths': [], 'services': [], 'suggested_options': options.model_dump(), 'lane': lane,
                     'transport': 'ssh', 'gpu': self.hosts.latest_preflight(host_id).gpu.model_dump()}
         executor = self.hosts.executor_for(host)

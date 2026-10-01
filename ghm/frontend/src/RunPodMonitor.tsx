@@ -22,6 +22,7 @@ export default function RunPodMonitor() {
   const query = useRunPod();
   const [keyPath, setKeyPath] = useState('');
   const [connecting, setConnecting] = useState('');
+  const [perGpu, setPerGpu] = useState(1);
   const [pasted, setPasted] = useState<Record<string,string>>({});
   const post=async(url:string,body?:object)=>{
     const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:body?JSON.stringify(body):undefined});
@@ -61,7 +62,7 @@ export default function RunPodMonitor() {
   const connect=async(pod:Pod,mode:'auto'|'proxy'='auto',allGpus=false)=>{
     setConnecting(pod.id); setMessage('');
     try {
-      const result=await post(`/api/runpod/pods/${pod.id}/connect`,{mode,ssh_command:pasted[pod.id]||'',all_gpus:allGpus});
+      const result=await post(`/api/runpod/pods/${pod.id}/connect`,{mode,ssh_command:pasted[pod.id]||'',all_gpus:allGpus,per_gpu:perGpu});
       await client.invalidateQueries({queryKey:['hosts']});
       // Every GPU lane shares one SSH endpoint, so one fingerprint confirmation covers all of them.
       let trusted='';
@@ -75,7 +76,7 @@ export default function RunPodMonitor() {
       }
       await client.invalidateQueries({queryKey:['hosts']});
       await client.invalidateQueries({queryKey:['runpod-pods']});
-      setMessage(allGpus&&result.lanes?.length>1?`Đã nối ${result.lanes.length} GPU của Pod thành ${result.lanes.length} máy Historia. Cài bộ AI cho GPU 0 trước, sau đó cài thêm cho các GPU còn lại (rất nhanh vì dùng chung model).`:result.action==='address_updated'?'Đã cập nhật địa chỉ mới của Pod. Chạy "Kiểm tra máy" trước khi dùng.':'Đã nối Pod vào Historia. Bấm "Kiểm tra máy" ở danh sách máy bên dưới.');
+      setMessage(perGpu>1&&result.lanes?.length>1?`Đã nối ${result.lanes.length} tiến trình ComfyUI vào Historia (${perGpu} tiến trình mỗi GPU). Cài bộ AI cho máy đầu tiên trước, sau đó cài thêm cho các máy còn lại (rất nhanh vì dùng chung model). Khi tạo lượt sản xuất, tick các máy này ở ô chạy song song.`:allGpus&&result.lanes?.length>1?`Đã nối ${result.lanes.length} GPU của Pod thành ${result.lanes.length} máy Historia. Cài bộ AI cho GPU 0 trước, sau đó cài thêm cho các GPU còn lại (rất nhanh vì dùng chung model).`:result.action==='address_updated'?'Đã cập nhật địa chỉ mới của Pod. Chạy "Kiểm tra máy" trước khi dùng.':'Đã nối Pod vào Historia. Bấm "Kiểm tra máy" ở danh sách máy bên dưới.');
     } catch(error) { setMessage((error as Error).message); }
     finally { setConnecting(''); }
   };
@@ -100,6 +101,8 @@ export default function RunPodMonitor() {
       {data.error ? <p className="work-error-box" role="alert">{data.error}</p> : <>
         <p><strong>{data.running_count} Pod đang chạy</strong> · đang tốn {money(data.running_cost_per_hr)}/giờ (≈ {money((data.running_cost_per_hr||0)*24)}/ngày)</p>
         {data.pods.length===0 && <p>Tài khoản chưa có Pod nào.</p>}
+        <label className="field"><span>Số tiến trình ComfyUI mỗi GPU khi nối Pod</span><select aria-label="Số tiến trình ComfyUI mỗi GPU" value={perGpu} onChange={e=>setPerGpu(Number(e.target.value))}>{[1,2,3,4].map(n=><option key={n} value={n}>{n}{n===1?' · mặc định':''}</option>)}</select></label>
+        {perGpu>1 && <p className="action-help">Một ảnh chỉ dùng GPU khoảng 12 giây trên tổng 45–65 giây (phần còn lại là tải lên, chờ và tải về), nên nhiều tiến trình trên cùng GPU giúp GPU bận liên tục. Mỗi tiến trình cần khoảng 28 GB VRAM lúc cao điểm; Historia từ chối nếu GPU không đủ. Chọn rồi bấm nối hoặc cập nhật Pod bên dưới; tiến trình mới hiện thành máy riêng để tick chạy song song.</p>}
         <div style={{overflowX:'auto'}}><table><thead><tr><th>Pod</th><th>Trạng thái</th><th>GPU</th><th>$/giờ</th><th>Đã chạy</th><th>Đã tốn phiên này</th><th>Máy Historia</th><th></th><th>Điều khiển</th></tr></thead><tbody>
           {data.pods.map(p=><tr key={p.id}><td>{p.name||p.id}</td><td>{p.status==='RUNNING'?'🟢 Đang chạy':p.status==='EXITED'?'⏸ Đã dừng':p.status}</td><td>{p.gpu?`${p.gpu_count||1}× ${p.gpu}`:'—'}</td><td>{money(p.cost_per_hr)}</td><td>{uptime(p.uptime_seconds)}</td><td>{money(p.session_cost)}</td><td>{p.lanes&&p.lanes.length>1?p.lanes.map(l=>l.label).join(' + '):p.host_label||'Chưa nối'}</td><td>{p.host_id&&p.status==='RUNNING'&&(((p.gpu_count||0)>1&&(p.lanes?.length||0)<(p.gpu_count||1))||(!p.gpu_count_known&&(p.lanes?.length||0)<=1))?<div><small style={{display:'block'}}>{(p.gpu_count||0)>1?`Pod có ${p.gpu_count} GPU nhưng Historia mới dùng 1. Nối mỗi GPU thành một máy để render song song.`:'Chưa biết Pod có mấy GPU. Historia sẽ hỏi chính máy đó (nvidia-smi) rồi nối mỗi GPU thành một máy.'}</small><button disabled={connecting===p.id||!data.ssh_key_path||(!p.ssh_ready&&!p.proxy_username&&!(pasted[p.id]||'').includes('@ssh.runpod.io'))} onClick={()=>connect(p,p.ssh_ready?'auto':'proxy',true)}>{connecting===p.id?'Đang nối…':(p.gpu_count||0)>1?`Nối tất cả ${p.gpu_count} GPU`:'Dò số GPU và nối'}</button></div>:p.host_id||p.status!=='RUNNING'?null:p.ssh_ready
             ?<button disabled={connecting===p.id||!data.ssh_key_path} title={!data.ssh_key_path?'Lưu đường dẫn khóa SSH ở dưới trước':undefined} onClick={()=>connect(p,'auto',(p.gpu_count||1)>1)}>{connecting===p.id?'Đang nối…':p.linked_host_id?'Cập nhật địa chỉ':(p.gpu_count||1)>1?`Nối ${p.gpu_count} GPU vào Historia (SSH gốc)`:'Nối vào Historia (SSH gốc)'}</button>
