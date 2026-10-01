@@ -145,6 +145,10 @@ class Approval(StrictModel):
     approved: bool = True
 
 
+class ClearRenderData(StrictModel):
+    keep_speech: bool = False
+
+
 class RegenerateKeyframes(StrictModel):
     scene_id: str = Field(min_length=1, max_length=64)
 

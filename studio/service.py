@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from studio.media import digest
-from studio.models import Artifact, Character, Job, ProductionRun, Project, Scene, Source
+from studio.models import Artifact, Character, Job, JobEvent, ProductionRun, Project, Scene, Source
 from studio.schemas import (
     CharacterInput,
     ProjectInput,
@@ -88,6 +88,89 @@ class StudioService:
                 raise ValueError('Dự án còn tác vụ đang chạy/chờ hoặc chưa đối chiếu GPU; chưa thể xóa.')
             session.delete(row)
             session.commit()
+
+    # Scene keys that hold generated output; the script (narration, visual prompt, shots, citations) is left alone.
+    _SCENE_OUTPUT = ('keyframe_id', 'keyframe_approved', 'shot_keyframes', 'shot_keyframes_approved', 'clip_ids',
+                     'clip_approved', 'rife_clip_ids', 'reuse_shot_keyframes', 'reuse_clip_ids', 'dialogue_speech')
+    _SCENE_SPEECH = ('speech_id', 'duration', 'shot_count')
+
+    def clear_render_data(self, id: str, keep_speech: bool = False) -> dict:
+        """Forget everything the pipeline produced for a project so it can be rendered again from scratch.
+
+        Kept: project settings, sources/uploads and their frames, characters, outline and every scene's script.
+        Removed: production runs, jobs and their logs, generated artifacts (speech unless ``keep_speech``, keyframes,
+        clips, RIFE clips, the exported film) and the files behind them. Never contacts a GPU.
+        """
+        from sqlalchemy import delete, text
+
+        from studio.jobs import StudioJobs
+        with self.sessions() as session:
+            session.execute(text('BEGIN IMMEDIATE'))
+            project = session.get(Project, id)
+            if project is None:
+                raise KeyError(id)
+            if session.scalar(select(ProductionRun.id).where(ProductionRun.project_id == id,
+                    ProductionRun.status.in_(['running', 'pause_requested', 'reconciling']))):
+                raise ValueError('Lượt sản xuất đang chạy hoặc chờ đối chiếu. Tạm dừng và đợi nó dừng hẳn rồi mới xóa dữ liệu.')
+            jobs = list(session.scalars(select(Job).where(Job.project_id == id)))
+            for job in jobs:
+                if job.status in {'queued', 'running', 'cancelling', 'reconciling'} or (
+                        job.status not in {'completed', 'cancelled'} and StudioJobs.remote_pending(job.result)):
+                    raise ValueError('Còn tác vụ đang chạy hoặc chưa đối chiếu với GPU. Dừng/đối chiếu xong rồi mới xóa dữ liệu.')
+            scenes = list(session.scalars(select(Scene).where(Scene.project_id == id)))
+            kept_jobs = {j.id for j in jobs if keep_speech and j.kind == 'speech' and j.status == 'completed'}
+            kept_artifacts = set()
+            for source in session.scalars(select(Source).where(Source.project_id == id)):
+                kept_artifacts |= {source.data.get('artifact_id'), source.data.get('parent_artifact_id')}
+            if keep_speech:
+                kept_artifacts |= {sc.data.get('speech_id') for sc in scenes}
+            kept_artifacts.discard(None)
+            doomed = [a for a in session.scalars(select(Artifact).where(Artifact.project_id == id))
+                      if a.id not in kept_artifacts and a.job_id not in kept_jobs]
+            files = [(self.root / a.relative_path).resolve() for a in doomed]
+            doomed_ids = {a.id for a in doomed}
+            keep_files = {(self.root / a.relative_path).resolve() for a in session.scalars(
+                select(Artifact).where(Artifact.project_id == id)) if a.id not in doomed_ids}
+            doomed_jobs = [j for j in jobs if j.id not in kept_jobs]
+            job_dirs = [(self.root / 'jobs' / j.id).resolve() for j in doomed_jobs]
+            runs = list(session.scalars(select(ProductionRun).where(ProductionRun.project_id == id)))
+            if doomed_jobs:
+                session.execute(delete(JobEvent).where(JobEvent.job_id.in_([j.id for j in doomed_jobs])))
+            for row in [*doomed, *doomed_jobs, *runs]:
+                session.delete(row)
+            for scene in scenes:
+                data = {k: v for k, v in scene.data.items()
+                        if k not in self._SCENE_OUTPUT and (keep_speech or k not in self._SCENE_SPEECH)}
+                data['clip_ids'], data['clip_approved'] = [], False
+                scene.data = data
+                scene.revision += 1
+            session.commit()
+        root = self.root.resolve()
+        freed = removed = 0
+        for path in files:
+            if path.is_file() and path.is_relative_to(root) and path not in keep_files:
+                freed += path.stat().st_size
+                path.unlink(missing_ok=True)
+                removed += 1
+        for directory in job_dirs:
+            if not (directory.is_dir() and directory.is_relative_to(root / 'jobs')):
+                continue
+            for path in sorted(directory.rglob('*'), key=lambda item: len(item.parts), reverse=True):
+                if path.is_file() and path.resolve() not in keep_files:
+                    freed += path.stat().st_size
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                elif path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        return {'runs': len(runs), 'jobs': len(doomed_jobs), 'artifacts': len(doomed), 'files_removed': removed,
+                'megabytes_freed': round(freed / 1_000_000, 1), 'kept_speech': keep_speech}
 
     def project(self, id: str) -> dict:
         result = self.read(self.require(Project, id))

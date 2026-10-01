@@ -365,6 +365,26 @@ test('regenerate one scene: asks first, is disabled while the run is rendering, 
   expect(state.bodies.at(-1)).toMatchObject({body:{scene_id:'s6'}});
 });
 
+test('clear render data: needs the typed word, can keep the speech, and is blocked while rendering',async({page})=>{
+  const state=await reviewFixture(page);
+  state.run.status='running';
+  await page.goto('/?page=projects&project=p&tab=video');
+  await expect(page.getByRole('button',{name:'Xóa dữ liệu render…'})).toBeDisabled();
+  state.run.status='paused';
+  await page.reload();
+  await page.getByRole('button',{name:'Xóa dữ liệu render…'}).click();
+  const dialog=page.getByRole('dialog',{name:'Xác nhận xóa dữ liệu render'});
+  const confirm=dialog.getByRole('button',{name:'Xóa dữ liệu render'});
+  await expect(confirm).toBeDisabled();
+  expect(state.mutations).toEqual([]);
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('textbox').fill('xóa');
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect.poll(()=>state.mutations).toEqual(['/api/studio/projects/p/clear-render-data']);
+  expect(state.bodies.at(-1)).toMatchObject({body:{keep_speech:true}});
+});
+
 test('GPU page shows Vietnamese labels and translated backend errors',async({page},testInfo)=>{
   const state=await fixture(page);
   await page.route('**/api/hosts/h/preflight',route=>route.fulfill({status:404,json:{detail:'Chưa có kết quả kiểm tra máy.'}}));

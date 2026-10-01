@@ -22,6 +22,7 @@ from studio.schemas import (
     InstallConsent,
     JobInput,
     KeyframeBatchApproval,
+    ClearRenderData,
     RegenerateKeyframes,
     OutlineApproval,
     PendingClipConfig,
@@ -226,6 +227,10 @@ def router(service, jobs, host_lock):
     @api.delete("/projects/{id}", status_code=204)
     def delete_project(id: str):
         service.delete_project(id)
+
+    @api.post("/projects/{id}/clear-render-data")
+    def clear_render_data(id: str, payload: ClearRenderData):
+        return service.clear_render_data(id, payload.keep_speech)
 
     @api.get("/projects/{id}")
     def get_project(id: str):
