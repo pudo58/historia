@@ -131,3 +131,16 @@ def test_pod_groups_lists_gpu_lanes_of_one_pod_in_order(tmp_path):
     assert len(groups) == 1 and groups[0]['pod_id'] == 'pod1'
     assert [h['id'] for h in groups[0]['hosts']] == ids[:2]
     assert {h['status'] for h in groups[0]['hosts']} == {'not_installed'}
+
+
+def test_comfy_failure_detail_reports_node_and_exception_without_paths():
+    from studio.backend import comfy_failure_detail
+    status = {'status_str': 'error', 'messages': [
+        ['execution_start', {}],
+        ['execution_error', {'node_type': 'KSampler', 'exception_type': 'torch.OutOfMemoryError',
+                             'exception_message': 'CUDA out of memory.\nTried to allocate 2.00 GiB at /workspace/historia/ComfyUI/x.py'}]]}
+    text = comfy_failure_detail(status)
+    assert 'KSampler' in text and 'OutOfMemoryError' in text and 'CUDA out of memory' in text
+    assert '/workspace' not in text and '\n' not in text
+    assert comfy_failure_detail({'status_str': 'error', 'messages': []}) == ''
+    assert comfy_failure_detail({'messages': 'junk'}) == ''

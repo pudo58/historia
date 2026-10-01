@@ -1,6 +1,7 @@
 """Pinned ComfyUI transport. Persist prompt intent before POST to prevent duplicate renders."""
 import asyncio
 import json
+import re
 import shlex
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -17,6 +18,20 @@ from studio.packs import graph_for
 RIFE_OUTPUT_FPS = 48   # rife_post.json: 16 fps Wan clip x multiplier 3
 VIDEO_WORKFLOWS = {'wan_i2v', 'rife_post', 'wan_s2v'}
 
+
+def comfy_failure_detail(status) -> str:
+    """Node and exception ComfyUI itself recorded for a failed prompt (no paths, tokens or tracebacks)."""
+    try:
+        for entry in status.get("messages") or []:
+            if isinstance(entry, list) and len(entry) == 2 and entry[0] == "execution_error" and isinstance(entry[1], dict):
+                data = entry[1]
+                kind = re.sub(r"[^\w.]", "", str(data.get("exception_type", "")))[:80]
+                node = re.sub(r"[^\w. -]", "", str(data.get("node_type", "")))[:80]
+                text = re.sub(r"\s+", " ", re.sub(r"(/[\w.@+-]+){2,}", "<path>", str(data.get("exception_message", ""))))[:240]
+                return f" Chi tiết từ ComfyUI: {kind or 'lỗi'} tại node {node or '?'}: {text}".rstrip(": ")
+    except Exception:  # noqa: BLE001 -- diagnostics must never mask the original failure
+        pass
+    return ""
 
 def worker_failure(result):
     """Allowlisted diagnostics only: never return tracebacks, signed URLs or tokens."""
@@ -301,7 +316,8 @@ print(json.dumps(data))
                 checkpoint(stage, {'timing': timing})
             status = item.get("status", {})
             if status.get("status_str") != "success" or not status.get("completed"):
-                raise ValueError("ComfyUI xử lý thất bại. Có thể thiếu VRAM/model; không tự giảm chất lượng.")
+                raise ValueError("ComfyUI xử lý thất bại. Có thể thiếu VRAM/model; không tự giảm chất lượng." +
+                                 comfy_failure_detail(status))
             seconds = execution_seconds(item, prompt_id)
             if seconds is not None:
                 timing['comfy_execution_seconds'] = seconds
