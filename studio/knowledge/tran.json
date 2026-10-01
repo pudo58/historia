@@ -1,0 +1,182 @@
+{
+  "id": "tran",
+  "name": "Nhà Trần",
+  "period": "1225–1400",
+  "status": "Bản nháp tự soạn từ Đại Việt sử ký toàn thư (kỷ nhà Trần). Cần người kiểm sử duyệt trước khi dùng cho phim công bố.",
+  "script": "TÊN GỌI VÀ XƯNG HÔ: Vua nhà Trần thường nhường ngôi sớm cho thái tử rồi làm Thái thượng hoàng, vẫn cùng nắm việc nước (1258 Thái Tông nhường Thánh Tông; 1293 Nhân Tông nhường Anh Tông; 1313 Anh Tông nhường Minh Tông). Vua mới tự xưng hiệu (Nhân Hoàng, Anh Hoàng, Ninh Hoàng…), tôn cha là 'Thái thượng hoàng đế' kèm mỹ hiệu dài. Trong lời nói, người trong triều gọi vua là 'Quan gia'; người cha đã nhường ngôi là 'Thượng hoàng'. Niên hiệu thay đổi theo từng đời: Kiến Trung (1225), Thiệu Long (1258), Thiệu Bảo (1279), Trùng Hưng (từ tháng 9 năm 1285), Hưng Long (1293), Khai Thái (1324), Khai Hựu (1329), Thiệu Phong (1341), Xương Phù (1377), Quang Thái (1388), Kiến Tân (1398). Triều Nguyên gọi nước ta là An Nam; sứ Nguyên viết trong thư: quan liêu sĩ thứ An Nam mũ áo, lễ nhạc, phong tục đều theo lệ cũ của nước mình. Năm 1400 Hồ Quý Ly cướp ngôi, đặt quốc hiệu Đại Ngu: đó là nhà Hồ, không phải nhà Trần. ĐỊA DANH VÀ CUNG ĐIỆN: kinh sư là Thăng Long; phủ Thiên Trường là nơi Thượng hoàng ở; cung Trùng Hoa (vua ở), cung Vạn Thọ, cung Thánh Từ, điện Dưỡng Đức; điện Đại Minh, điện Thiên An, Long Trì (nơi duyệt cấm quân), cửa Đại triều phía Tây, gác Nguyên Huyền, cửa Hữu Lang; năm 1367 làm hành lang dài từ gác Nguyên Huyền đến cửa Đại triều để quan vào chầu tránh mưa nắng. Năm 1287 cung điện bị quân Nguyên đốt hết, Thượng hoàng phải ngự ở hành lang Thị Vệ. CHỨC QUAN: Thái sư, Thái úy, Tư đồ, Hành khiển, Nhập nội, Nội thị phán thủ, Khu mật viện (quản cấm quân từ 1342), cấm quân, quân Thiết ngạch, Long vệ; tôn thất được phong Đại vương/vương hầu (Hưng Đạo Vương Trần Quốc Tuấn, Chiêu Văn Vương Trần Nhật Duật, Thượng tướng Trần Quang Khải…). PHONG TỤC: Quân sĩ đầu đời Trần xăm rồng ('thái long') ở bụng, lưng, đùi; 1285 quân ta thích hai chữ 'Sát Thát' ở cánh tay; xăm rồng ở đùi của vua thôi từ Anh Tông; quân sĩ thôi xăm hẳn khi tuyển lính chuộng người 'béo trắng'. LƯU Ý NGUỒN: Toàn thư là sử biên niên, rất ít khi mô tả kiến trúc hay hình dáng cung điện; những mô tả đó trong gói này không có nguồn từ sách.",
+  "visual": "Dai Viet (Vietnam) under the Tran dynasty, 13th-14th century, historically grounded Vietnamese court, not a generic Chinese palace. Timber-framed halls on raised platforms with curved tiled roofs and covered corridors linking halls; modest Southeast Asian tropical setting, whitewashed way-stations, boats on rivers. No Forbidden-City yellow-glazed roofs, no Qing or Ming costume.",
+  "roles": [
+    {
+      "name": "Vua / Thượng hoàng",
+      "keywords": [
+        "king",
+        "emperor",
+        "vua",
+        "retired emperor",
+        "thượng hoàng",
+        "sovereign"
+      ],
+      "text": "The Tran emperor wears a long yellow robe with straight, flat-fronted lapels and a corded cap with a chin tie; a retired emperor may appear in a plain white cotton robe."
+    },
+    {
+      "name": "Quan văn / quan võ",
+      "keywords": [
+        "official",
+        "mandarin",
+        "minister",
+        "court",
+        "quan",
+        "scholar",
+        "general",
+        "commander",
+        "advisor"
+      ],
+      "text": "Court officials wear a black cap shaped like the character for 'ding' (ding-shaped black cap), wide sleeves, long robes without a skirt-like lower garment; officials of lower rank wear a blue flower-patterned cap with two small gold rings."
+    },
+    {
+      "name": "Vương hầu / hoàng tộc",
+      "keywords": [
+        "prince",
+        "princely",
+        "royal family",
+        "vương",
+        "hầu",
+        "noble",
+        "tôn thất"
+      ],
+      "text": "Princes with long hair wear a high crown-like cap; princes with short hair wear a close-fitting wrapped cap."
+    },
+    {
+      "name": "Thị vệ / cấm quân",
+      "keywords": [
+        "guard",
+        "guards",
+        "imperial guard",
+        "palace guard",
+        "thị vệ",
+        "cấm quân"
+      ],
+      "text": "Palace guards wear a basin-shaped cap decorated with flowers; soldiers have dragon tattoos on belly, back and thighs, or two characters inked on the forearm."
+    },
+    {
+      "name": "Lính / chiến thuyền",
+      "keywords": [
+        "soldier",
+        "soldiers",
+        "army",
+        "warrior",
+        "troops",
+        "lính",
+        "quân",
+        "fleet",
+        "boat",
+        "ship"
+      ],
+      "text": "Vietnamese soldiers of the period carry visible tattoos of dragons on thighs and a short ink inscription on the arm; wooden river boats with banners; no medieval European or Mongol armor on the Vietnamese side."
+    },
+    {
+      "name": "Dân thường / thuyền chài",
+      "keywords": [
+        "peasant",
+        "villager",
+        "commoner",
+        "fisherman",
+        "merchant",
+        "boatman",
+        "dân",
+        "nông dân",
+        "thuyền"
+      ],
+      "text": "Commoners wear short shirts and a conical leaf hat (non la); monks have a shaved head and plain cloth robe."
+    },
+    {
+      "name": "Cung nhân / hoàng hậu",
+      "keywords": [
+        "queen",
+        "empress",
+        "consort",
+        "palace lady",
+        "hoàng hậu",
+        "cung nhân",
+        "princess",
+        "công chúa"
+      ],
+      "text": "Women of the court wear long layered silk garments in the same restrained Dai Viet style, carried in a sedan chair with attendants for high ranks."
+    }
+  ],
+  "avoid": "Chinese imperial dragon robe (Qing style), queue hairstyle, Ming or Qing winged official hats, Forbidden City yellow glazed roofs, nine-storey pagodas, Japanese or Korean costume, European armor, modern objects.",
+  "sources": [
+    {
+      "claim": "Quan văn võ đội mũ chữ đinh đen; tụng quan đội mũ toàn hoa xanh; ống tay áo rộng 9 tấc đến 1 thước 2; không mặc xiêm",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, tháng 10 năm 1300"
+    },
+    {
+      "claim": "Quan văn võ thêm miếng lụa bọc tóc màu tía xen biếc dưới mũ chữ đinh",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, tháng giêng năm 1301"
+    },
+    {
+      "claim": "Vương hầu: tóc dài đội mũ triều thiên, tóc ngắn đội mũ bao",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, tháng 10 năm 1303"
+    },
+    {
+      "claim": "Vua mặc áo tràng vạt bằng màu vàng, đội mũ có thao (khi tiếp sứ Nguyên)",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, năm 1313"
+    },
+    {
+      "claim": "800 thị vệ các chi hậu đội mũ bồn hoa",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VII, tháng 10 năm 1347"
+    },
+    {
+      "claim": "Thượng hoàng mặc áo vải bông trắng",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V, đời Thánh Tông–Nhân Tông (đoạn Quốc Khang xin áo)"
+    },
+    {
+      "claim": "Quân sĩ xăm rồng 'thái long' ở bụng, lưng, đùi; vua thôi xăm đùi từ Anh Tông",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, năm 1299"
+    },
+    {
+      "claim": "Quân ta thích hai chữ 'Sát Thát' ở cánh tay",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V, năm 1285"
+    },
+    {
+      "claim": "Quân sĩ thôi xăm mình khi tuyển lính chuộng người béo trắng",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, năm 1323"
+    },
+    {
+      "claim": "Dân thuyền mặc áo ngắn, đội nón lá (Trần Khánh Dư gặp vua)",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V, năm 1281"
+    },
+    {
+      "claim": "Quy chế xe kiệu, mũ áo, người hầu theo thứ bậc",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V, tháng 5 năm 1254"
+    },
+    {
+      "claim": "1395: cấm quan dùng áo thụng tay, chỉ cho dùng áo hẹp tay; đồ dùng của dân không được mạ vàng, sơn son (thời Hồ Quý Ly nắm quyền)",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VIII, tháng 6 năm 1395"
+    },
+    {
+      "claim": "Hành lang dài từ gác Nguyên Huyền đến cửa Đại triều phía Tây",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VII, tháng 3 năm 1367"
+    },
+    {
+      "claim": "Cung điện bị giặc đốt hết, Thượng hoàng ngự hành lang Thị Vệ",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V, tháng 4 năm 1287"
+    },
+    {
+      "claim": "Thượng hoàng ở phủ Thiên Trường; vua ở cung Trùng Hoa",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.VI, năm 1299"
+    },
+    {
+      "claim": "Vua nhường ngôi sớm, tôn cha làm Thái thượng hoàng đế",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V năm 1258 và 1293; Q.VI năm 1313, 1329"
+    },
+    {
+      "claim": "Cách gọi vua là 'Quan gia'",
+      "ref": "Đại Việt sử ký toàn thư, Bản kỷ, Q.V–VIII, nhiều đoạn (1277, 1294, 1295, 1299…)"
+    },
+    {
+      "claim": "Kiến trúc cụ thể của cung điện (mái, cột, màu sắc): sách không mô tả. Dòng 'visual' về mái ngói cong, nền cao, hành lang là suy luận chung, cần đối chiếu tài liệu khảo cổ Hoàng thành Thăng Long",
+      "ref": "Chưa có nguồn trong sách — cần kiểm"
+    }
+  ]
+}

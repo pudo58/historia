@@ -95,6 +95,8 @@ class StudioService:
             result["sources"] = [self.read(row) for row in session.scalars(select(Source).where(Source.project_id == id))]
             result["characters"] = [self.read(row) for row in session.scalars(select(Character).where(Character.project_id == id))]
             result["scenes"] = [self.read(row) for row in session.scalars(select(Scene).where(Scene.project_id == id).order_by(Scene.position))]
+        from studio import knowledge
+        result["knowledge"] = knowledge.load(self.root, result.get("knowledge_id", ""))
         return result
 
     def update_project(self, id: str, data: ProjectInput) -> dict:
@@ -105,11 +107,11 @@ class StudioService:
                 raise KeyError(id)
             old = row.data
             values = {**old, **data.model_dump()}
-            script_changed = any(old.get(k) != values[k] for k in ["topic", "era", "location", "duration_minutes", "duration_seconds"])
+            script_changed = any(old.get(k) != values[k] for k in ["topic", "era", "location", "knowledge_id", "duration_minutes", "duration_seconds"])
             if script_changed:
                 values["outline_approved"] = False
             visual_changed = any(old.get(k, 'standard' if k == 'keyframe_profile' else None) != values[k]
-                                 for k in ["style", "era", "location", "quality", "render_profile", "aspect_ratio", "keyframe_profile"])
+                                 for k in ["style", "era", "location", "knowledge_id", "quality", "render_profile", "aspect_ratio", "keyframe_profile"])
             from studio.formats import resolve_format
             visual_changed = visual_changed or resolve_format(old.get('quality', 'draft'), old)['render_size'] != resolve_format(values.get('quality', 'draft'), values)['render_size']
             audio_changed = any(old.get(k) != values[k] for k in ["voice", "pronunciation"])

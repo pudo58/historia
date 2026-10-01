@@ -424,3 +424,22 @@ test('voice audition: asks for one line and plays back every voice from the fini
     {path:'/api/studio/projects/p/voice-audition',body:{text:'Các khanh bình thân.'}}]);
   expect(state.errors).toEqual([]);
 });
+
+test('dynasty knowledge: the project offers packs and the editor saves the edited pack',async({page})=>{
+  const state=await fixture(page,'completed');
+  Object.assign(state.project,{knowledge_id:'tran'});
+  const pack={id:'tran',name:'Nhà Trần',period:'1225–1400',status:'Bản nháp',script:'Quan gia',visual:'Tran look.',avoid:'Qing robe',
+    roles:[{name:'Vua',keywords:['king'],text:'Yellow robe.'}],sources:[{claim:'Mũ chữ đinh',ref:'Toàn thư, Q.VI'}],builtin:true,version:'abc'};
+  let saved:unknown=null;
+  await page.route('**/api/studio/knowledge',route=>route.fulfill({json:[{id:'tran',name:'Nhà Trần',period:'1225–1400',builtin:true,status:'',version:'abc'}]}));
+  await page.route('**/api/studio/knowledge/tran',route=>{
+    if(route.request().method()==='PUT'){saved=route.request().postDataJSON();return route.fulfill({json:{...pack,...(saved as object),builtin:false}});}
+    return route.fulfill({json:pack});});
+  await page.goto('/?page=projects&project=p&tab=idea');
+  await expect(page.getByLabel('Gói tri thức triều đại')).toHaveValue('tran');
+  await page.getByText(/Gói tri thức: Nhà Trần/).click();
+  await page.getByLabel(/Hình ảnh chung của thời kỳ/).fill('Edited look.');
+  await page.getByRole('button',{name:'Lưu gói tri thức'}).click();
+  await expect(page.getByText(/Đã lưu/)).toBeVisible();
+  expect((saved as {visual:string}).visual).toBe('Edited look.');
+});

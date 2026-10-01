@@ -38,6 +38,7 @@ def dependency_identity(project, scene, kind):
             refs.update(character.get('reference_ids', []))
         value = {'scene': {k: scene.get(k) for k in ('visual_prompt', 'camera', 'seed', 'steps')},
                  'settings': {k: project.get(k) for k in ('style', 'era', 'location', 'aspect_ratio')},
+                 'knowledge': (project.get('knowledge') or {}).get('version'),
                  'render_size': resolve_format(project.get('quality', 'draft'), project)['render_size'],
                  'render_profile': project.get('render_profile') or ('standard' if project.get('quality') == 'final' else 'draft'),
                  'characters': characters, 'references': [s for s in project['sources'] if s['id'] in refs]}

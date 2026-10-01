@@ -136,3 +136,8 @@ Các test media tạo video màu đơn sắc và WAV im lặng để kiểm tra 
 
 Giữ cùng Windows keyring hoặc `GHM_MASTER_KEY` đã dùng để giải mã host cũ. Nếu thay khóa, cần nhập lại credential; không dùng demo master key và không xóa DB để xử lý lỗi.
 Dừng app/tunnel/render không dừng tiền thuê GPU.
+
+- Dynasty knowledge packs (`studio/knowledge.py`, `studio/knowledge/tran.json`): a project can pick a pack; its Vietnamese facts and visual bible go into
+  the outline/script prompts, and a visual line plus role lines (matched by keywords in the scene) go into every keyframe prompt. The pack's version is part
+  of the keyframe input hash, so editing a pack regenerates stale images. The built-in Tran pack is a draft written from the Đại Việt sử ký toàn thư (each
+  claim has a source line; architecture has none in the book and is marked as such). Not yet verified: how much the image model follows the added text.

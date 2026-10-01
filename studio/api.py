@@ -17,6 +17,7 @@ from studio.schemas import (
     ChainFrameApproval,
     CharacterInput,
     DialogueTestInput,
+    KnowledgePackInput,
     VoiceAuditionInput,
     InstallConsent,
     JobInput,
@@ -364,6 +365,26 @@ def router(service, jobs, host_lock):
     @api.post('/projects/{id}/voice-audition', status_code=201)
     def voice_audition(id: str, payload: VoiceAuditionInput):
         return jobs.voice_audition(id, payload.text)
+
+    @api.get('/knowledge')
+    def knowledge_list():
+        from studio import knowledge
+        return knowledge.listing(service.root)
+
+    @api.get('/knowledge/{pack_id}')
+    def knowledge_get(pack_id: str):
+        from studio import knowledge
+        pack = knowledge.load(service.root, pack_id)
+        if not pack:
+            raise KeyError(pack_id)
+        return pack
+
+    @api.put('/knowledge/{pack_id}')
+    def knowledge_save(pack_id: str, payload: KnowledgePackInput):
+        from studio import knowledge
+        if payload.id != pack_id:
+            raise ValueError('Mã gói không khớp đường dẫn.')
+        return knowledge.save(service.root, payload.model_dump())
 
     @api.get("/jobs/{id}/events")
     def events(id: str, after: int = Query(default=0, ge=0), tail: bool = False):

@@ -22,6 +22,7 @@ class ProjectInput(StrictModel):
     topic: str = Field(min_length=1, max_length=4000)
     era: str = Field(default="", max_length=300)
     location: str = Field(default="", max_length=300)
+    knowledge_id: str = Field(default="", max_length=40)
     duration_minutes: Literal[1, 1.5, 3, 5, 10, 15, 20] = 10
     duration_seconds: Literal[60, 90, 180, 300, 600, 900, 1200] | None = None
 
@@ -208,6 +209,29 @@ class JobInput(StrictModel):
     license_accepted: bool = False
     review_mode: Literal['flag', 'compare'] | None = None
     candidate_ids: list[str] = Field(default_factory=list, max_length=2)
+
+
+class KnowledgeRole(StrictModel):
+    name: str = Field(min_length=1, max_length=80)
+    keywords: list[str] = Field(default_factory=list, max_length=24)
+    text: str = Field(max_length=700)
+
+
+class KnowledgeSource(StrictModel):
+    claim: str = Field(max_length=400)
+    ref: str = Field(max_length=300)
+
+
+class KnowledgePackInput(StrictModel):
+    id: str = Field(pattern=r'^[a-z0-9][a-z0-9-]{0,39}$')
+    name: str = Field(min_length=1, max_length=120)
+    period: str = Field(default='', max_length=120)
+    status: str = Field(default='', max_length=200)
+    script: str = Field(default='', max_length=8000)
+    visual: str = Field(default='', max_length=1200)
+    roles: list[KnowledgeRole] = Field(default_factory=list, max_length=20)
+    avoid: str = Field(default='', max_length=800)
+    sources: list[KnowledgeSource] = Field(default_factory=list, max_length=80)
 
 
 class DialogueTestInput(StrictModel):
