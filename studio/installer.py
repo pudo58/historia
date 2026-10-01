@@ -128,6 +128,9 @@ class InstallExecutor:
                 ready = re.fullmatch(r'Model ready: ([\w.@/+-]{1,200})', line)
                 if ready:
                     on_output('stdout', 'Đã kiểm tra checksum: ' + ready[1])
+                shown = pip_progress(line)
+                if shown:
+                    on_output('stdout', shown)
             pending = pending[-4096:]
         callback = safe_progress if on_output else None
         if input_data is None:
@@ -145,6 +148,48 @@ class InstallExecutor:
 
     def __getattr__(self, name):
         return getattr(self.executor, name)
+
+
+_PIP_NAME = r'[A-Za-z0-9][A-Za-z0-9._+\-]{0,80}'
+
+
+def pip_progress(line: str) -> str | None:
+    """A pip line that is safe to show: package names/files only, never URLs, tokens or free text."""
+    line = line.strip()
+    match = re.fullmatch(r'Collecting (' + _PIP_NAME + r')(?:\[[\w,\- ]{1,40}\])?(?:\s*[=<>!~]=?[\w.*+,<>=!~ -]{1,60})?(?: \(from .*\))?', line)
+    if match:
+        return 'pip: thu thập ' + match[1]
+    match = re.fullmatch(r'Downloading (?:\S*/)?(' + _PIP_NAME + r'\.(?:whl|tar\.gz|zip))(?:\?\S*)? \(([\d.]+ ?[kMG]?B)\)', line)
+    if match:
+        return f'pip: tải {match[1]} ({match[2]})'
+    if line.startswith('Installing collected packages:'):
+        names = re.findall(_PIP_NAME, line.split(':', 1)[1])
+        return f'pip: đang cài {len(names)} gói vào venv (bước này có thể im lặng vài phút).'
+    if line.startswith('Successfully installed '):
+        names = re.findall(_PIP_NAME, line[len('Successfully installed '):])
+        return f'pip: đã cài xong {len(names)} gói.'
+    return None
+
+
+class heartbeat:
+    """Periodic proof of life while a silent remote command runs (pip prints nothing for minutes)."""
+    def __init__(self, log, label, every=120):
+        self.log, self.label, self.every = log, label, every
+        self.task = None
+
+    async def _beat(self):
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(self.every)
+            self.log(f'Vẫn đang chạy: {self.label} ({int((time.monotonic() - started) // 60)} phút). Lệnh trên Pod chưa kết thúc, chưa có lỗi.')
+
+    async def __aenter__(self):
+        self.task = asyncio.ensure_future(self._beat())
+        return self
+
+    async def __aexit__(self, *exc):
+        self.task.cancel()
+        await asyncio.gather(self.task, return_exceptions=True)
 
 
 PARALLEL_PROBE = 'sleep 2; echo historia-channel-ok'
@@ -210,7 +255,8 @@ async def install(hosts, job, lock: dict, log) -> dict:
     q = shlex.quote
     python = root + "/venv/bin/python"
     async def command(value: str, timeout=1800, stage='Cài dependency'):
-        result = await executor.run(value, timeout, on_output=lambda channel, line: log(line))
+        async with heartbeat(log, stage):
+            result = await executor.run(value, timeout, on_output=lambda channel, line: log(line))
         if result.rc:
             raise ValueError(stage + ': ' + install_failure(result) + ' Các tệp cũ được giữ nguyên.')
         return result
@@ -289,11 +335,17 @@ async def install(hosts, job, lock: dict, log) -> dict:
 
         async def install_dependencies():
             if base_pending:
+                log('Môi trường chính (1/3): tạo venv Python cho ComfyUI.')
                 await create_environment(root + '/venv')
                 wheel_index = "cu130" if driver >= 580 else "cu128"
-                await command(f"{private_python(python)} -m pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/{wheel_index}")
+                log(f'Môi trường chính (2/3): cài PyTorch {wheel_index} (vài GB, thường 5–15 phút; pip không in tiến độ nên log sẽ thưa).')
+                await command(f"{private_python(python)} -m pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/{wheel_index}",
+                              stage='PyTorch ' + wheel_index)
+                log('Môi trường chính (3/3): cài requirements ComfyUI, kiểm tra pip và thử tạo tensor trên GPU.')
                 await command(f"{private_python(python)} -m pip install -r {q(comfy + '/requirements.txt')} && {private_python(python)} -m pip check && "
-                              f"{q(python)} -c 'import torch; assert torch.cuda.is_available(); (torch.ones(1,device=\"cuda\")+1).cpu()' && touch {q(root + '/.studio-base-' + COMFY_COMMIT)}")
+                              f"{q(python)} -c 'import torch; assert torch.cuda.is_available(); (torch.ones(1,device=\"cuda\")+1).cpu()' && touch {q(root + '/.studio-base-' + COMFY_COMMIT)}",
+                              stage='Requirements ComfyUI')
+                log('Môi trường chính đã cài xong.')
             for environment, packages in lock['environments'].items():
                 env_hash = hashlib.sha256(packages.encode()).hexdigest()[:16]
                 marker = root + "/" + environment + "-venv/.studio-installed-" + env_hash
@@ -341,11 +393,13 @@ async def install(hosts, job, lock: dict, log) -> dict:
             await download_models()
             await install_dependencies()
 
-        result = await executor.run_input(q(root + "/llm-venv/bin/python") + " -c " + q(SNAPSHOT_SCRIPT.replace('__CACHE__', CACHE_HELPERS)),
-                                          json.dumps({"root": root, "snapshots": lock["snapshots"],
-                                                      "cache": VERIFIED_CACHE, "recheck": options.recheck_models,
-                                                      "token": hosts.setting("hf_token")}), timeout=14400,
-                                          on_output=lambda channel, line: log(line))
+        log('Đang kiểm tra model LLM/TTS bằng llm-venv.')
+        async with heartbeat(log, 'kiểm tra model LLM/TTS'):
+            result = await executor.run_input(q(root + "/llm-venv/bin/python") + " -c " + q(SNAPSHOT_SCRIPT.replace('__CACHE__', CACHE_HELPERS)),
+                                              json.dumps({"root": root, "snapshots": lock["snapshots"],
+                                                          "cache": VERIFIED_CACHE, "recheck": options.recheck_models,
+                                                          "token": hosts.setting("hf_token")}), timeout=14400,
+                                              on_output=lambda channel, line: log(line))
         if result.rc:
             raise ValueError("Kiểm tra model LLM/TTS thất bại.")
         log('Đã kiểm tra checksum toàn bộ file model. Đang kiểm tra ComfyUI; chưa đánh dấu workflow đã kiểm chứng.')

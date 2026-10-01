@@ -701,3 +701,49 @@ def test_batch_progress_reaches_log_through_run_input():
             'download', '{}', on_output=lambda *v: logs.append(v[1]))
         assert logs == ['Đã tải 0.25 / 1.00 GiB model.', 'Đã kiểm tra checksum: wan-high']
     asyncio.run(check())
+
+
+def test_pip_progress_shows_only_safe_package_lines():
+    from studio.installer import pip_progress
+    assert pip_progress('Collecting torch==2.11.0') == 'pip: thu thập torch'
+    assert pip_progress('Collecting aiohttp>=3.11.8 (from -r requirements.txt (line 5))') == 'pip: thu thập aiohttp'
+    assert pip_progress('  Downloading https://download.pytorch.org/whl/cu130/torch-2.11.0-cp312-linux_x86_64.whl (900.1 MB)'.strip()) == \
+        'pip: tải torch-2.11.0-cp312-linux_x86_64.whl (900.1 MB)'
+    assert pip_progress('Installing collected packages: numpy, torch, pillow').startswith('pip: đang cài 3 gói')
+    assert pip_progress('Successfully installed numpy-2.1 torch-2.11.0') == 'pip: đã cài xong 2 gói.'
+    # Free text, URLs with credentials or tokens never pass.
+    assert pip_progress('Looking in indexes: https://user:secret@example.com/simple') is None
+    assert pip_progress('Using cached https://x/y.whl?token=abc') is None
+    assert pip_progress('hf_abcdef token leaked') is None
+
+
+def test_install_executor_forwards_pip_progress_not_raw_output():
+    import asyncio
+    from studio.installer import InstallExecutor
+
+    class Executor:
+        async def run(self, command, timeout=None, on_output=None):
+            on_output('stdout', 'Collecting torch==2.11.0\nLooking in indexes: https://u:p@h/simple\nSuccessfully installed torch-2.11.0\n')
+            from ghm.executors.base import CommandResult
+            return CommandResult(0, '', '')
+
+    logs = []
+    asyncio.run(InstallExecutor(Executor(), '/workspace/historia').run('pip', on_output=lambda ch, line: logs.append(line)))
+    assert logs == ['pip: thu thập torch', 'pip: đã cài xong 1 gói.']
+
+
+def test_heartbeat_reports_while_a_silent_command_runs():
+    import asyncio
+    from studio.installer import heartbeat
+
+    async def scenario():
+        logs = []
+        async with heartbeat(logs.append, 'PyTorch cu130', every=0.05):
+            await asyncio.sleep(0.18)
+        count = len(logs)
+        await asyncio.sleep(0.12)
+        return logs, count == len(logs)
+
+    logs, stopped = asyncio.run(scenario())
+    assert len(logs) >= 2 and 'PyTorch cu130' in logs[0] and 'chưa có lỗi' in logs[0]
+    assert stopped
