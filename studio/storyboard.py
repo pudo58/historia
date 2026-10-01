@@ -19,6 +19,8 @@ def composition(shot):
 
 def prompt_suffix(shot, portrait=False):
     text = composition(shot)
+    if shot.get('narration_excerpt'):
+        text += '\nThe moment this shot shows (from the narration): ' + shot['narration_excerpt']
     if portrait:
         text += '\nNative portrait composition: foreground, midground, background; keep head, hands and historical details inside the central 80% safe crop (16-pixel alignment); reserve bottom 20% for subtitles added in editing. No text.'
     return text

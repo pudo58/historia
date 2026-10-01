@@ -1277,8 +1277,11 @@ class StudioJobs:
                 return
             from studio import knowledge as dynasty
             period = dynasty.visual_for_scene(project.get('knowledge'), scene)
-            prompt = (f"{project['style']}. {project['era']}. {project['location']}. " + (period + ". " if period else "") +
-                      f"{scene['visual_prompt']}. {scene['camera']}")
+            context = f"{project['style']}. {project['era']}. {project['location']}. " + (period + ". " if period else "")
+            scene_text = f"{scene['visual_prompt']}. {scene['camera']}"
+            # What happens in this scene leads the prompt and the long period/setting notes follow it, so a generic
+            # court-and-river bible cannot outweigh the scene. A shot's image and clip share the same prompt.
+            prompt = scene_text
             refs = list(scene["reference_ids"])
             for character in project["characters"]:
                 if character["id"] in scene["character_ids"]:
@@ -1359,10 +1362,14 @@ class StudioJobs:
                 if scene.get('shot_list'):
                     from studio.storyboard import prompt_suffix
                     shot_prompt = prompt + '\n' + prompt_suffix(scene['shot_list'][index], project.get('aspect_ratio') == '9:16')
+                if context:
+                    shot_prompt += '\nHistorical setting (background and costume reference only; the scene above decides what is shown): ' + context
+                # Each scene starts from its own noise: with one shared seed every scene's shot N began identical.
+                image_seed = scene['seed'] + 7919 * int(scene.get('position') or 0) + (index if count > 1 else 0)
                 started = time.monotonic()
                 from studio.generation import stage_steps
                 path = await self.backend.generate(self.service.require(Job, job.id), graph, shot_prompt, images,
-                    scene['seed'] + index if job.kind == 'keyframe' and count > 1 else scene['seed'], project["quality"], log, checkpoint, stage,
+                    image_seed if job.kind == 'keyframe' else scene['seed'], project["quality"], log, checkpoint, stage,
                     stage_steps(scene, job.kind, graph, project, job.snapshot.get('generation_version', 2)), index)
                 stored = time.monotonic()
                 measurement = self.service.require(Job, job.id).result.get('submissions', {}).get(stage, {})

@@ -748,3 +748,35 @@ async def test_only_input_previews_means_no_output(local, monkeypatch):
     with pytest.raises(ValueError, match='output đúng loại'):
         await run()
     assert mock.viewed == []
+
+
+@pytest.mark.asyncio
+async def test_keyframes_start_from_different_noise_per_scene_and_lead_with_the_scene(local, monkeypatch):
+    from studio.schemas import ShotDesign
+    _, service, jobs, old, image = local
+    monkeypatch.setattr('studio.jobs.probe', lambda p: {'duration': 8})
+    shots = [ShotDesign(subject='boat', narration_excerpt='Vua ngự thuyền nhẹ ra Hải Đông.').model_dump(),
+             ShotDesign(subject='boat', camera_angle='low').model_dump()]
+    seen = []
+
+    async def generate(job, graph, prompt, images, seed, quality, log, checkpoint, stage, steps, index):
+        seen.append((seed, prompt))
+        path = service.job_directory(job.id) / (stage + '.fixture')
+        path.write_bytes(image.read_bytes())
+        return path
+    monkeypatch.setattr(jobs.backend, 'generate', generate)
+    for position in (2, 5):
+        scene = {**old.snapshot['scene'], 'shot_list': deepcopy(shots), 'image_strategy': 'per_shot', 'position': position,
+                 'seed': 42, 'visual_prompt': 'A burning stockade in a misty mountain pass'}
+        with service.sessions() as session:
+            job = Job(project_id=old.project_id, scene_id=old.scene_id, kind='keyframe', status='running',
+                      snapshot={'project': old.snapshot['project'], 'scene': scene}, input_hash=f'k{position}')
+            session.add(job)
+            session.commit()
+        await jobs._execute(job)
+    seeds = [seed for seed, _ in seen]
+    assert len(set(seeds)) == 4
+    prompt = seen[0][1]
+    assert prompt.startswith('A burning stockade')
+    assert prompt.index('A burning stockade') < prompt.index('Historical setting')
+    assert 'Vua ngự thuyền nhẹ ra Hải Đông.' in prompt
