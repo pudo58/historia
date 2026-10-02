@@ -38,7 +38,10 @@ async function fixture(page:Page, status='running') {
     if(path==='/api/studio/projects')return route.fulfill({json:[project]});
     if(path==='/api/studio/projects/p')return route.fulfill({json:project});
     if(path==='/api/studio/jobs')return route.fulfill({json:jobs});
-    if(path==='/api/hosts')return route.fulfill({json:[{id:'h',label:'A100 · Demo',state:'ready'}]});
+    if(path==='/api/hosts')return route.fulfill({json:[{id:'h',label:'A100 · Demo',address:'test',port:22,username:'root',state:'ready'}]});
+    if(path==='/api/studio/hosts/h/cost-policy')return route.fulfill({json:{config:{model_residency:'job',wan_concurrency:1},fault:null,evidence:null,measurement:null}});
+    if(path==='/api/studio/hosts/h/runtime')return route.fulfill({json:{config:{attention_backend:'default',memory_policy:'default'},adopt_existing:true,instructions:'Runtime minh họa',jobs:[]}});
+    if(path==='/api/studio/hosts/h/installation')return route.fulfill({json:{status:'verified',jobs:[]}});
     if(path.endsWith('/production-runs'))return route.fulfill({json:[run]});
     if(path.endsWith('/performance'))return route.fulfill({json:{scenes,completed_shots:25,remaining_shots:45,unmeasured_scenes:0,eta_seconds:null,estimated_remaining_usd:null,measured_audio_seconds:326.2}});
     if(path.includes('/artifacts/')&&path.endsWith('/file')) {
@@ -64,6 +67,33 @@ for(const width of [375,1366])test(`storyboard screenshot ${width}`,async({page}
   await expect(page.getByText(/không căn theo timestamp/)).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
   await page.screenshot({path:testInfo.outputPath(`storyboard-${width}.png`),fullPage:true});
+});
+
+test('cost profile stays serial and requires measured benchmarks and quality approval',async({page})=>{
+  const state=await fixture(page);
+  await page.goto('/?page=packs');
+  await expect(page.getByRole('heading',{name:'Chi phí GPU · hồ sơ đã đo'})).toBeVisible();
+  await page.getByLabel('Clip Wan trên mỗi GPU').selectOption('2');
+  await expect(page.getByRole('button',{name:'Lưu hồ sơ ở ranh giới an toàn'})).toBeDisabled();
+  await expect(page.getByText(/Hồ sơ đã chọn: giữ model theo/)).toContainText('1 Wan/GPU');
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
+});
+
+test('benchmark requires an explicit dollar budget and makes no mutation on tab navigation',async({page})=>{
+  const state=await fixture(page);
+  await page.goto('/?page=projects&project=p&tab=video');
+  await page.getByText('Nâng cao · benchmark GPU',{exact:true}).click();
+  await page.getByText('Benchmark Wan trên GPU · chạy riêng',{exact:true}).click();
+  const budget=page.getByLabel('Ngân sách xử lý tối đa (USD)');
+  await expect(budget).toHaveValue('');
+  await expect(budget).toHaveAttribute('required','');
+  await page.getByLabel('GPU dùng cho lượt đo').selectOption('h');
+  await expect(page.getByLabel('Giá thuê thực của lượt đo (USD/giờ)')).toHaveAttribute('required','');
+  await page.getByLabel('GPU dùng cho lượt đo').selectOption('');
+  await expect(page.getByRole('button',{name:'Chạy bộ shot đo thử'})).toBeDisabled();
+  expect(state.mutations).toEqual([]);
+  expect(state.errors).toEqual([]);
 });
 
 test('storyboard editor blocks unverified quality without GPU submission',async({page})=>{

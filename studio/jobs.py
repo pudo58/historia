@@ -3,19 +3,18 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 from contextlib import AsyncExitStack, nullcontext
 from datetime import UTC, datetime
+from pathlib import Path
 
 import asyncssh
 import httpx
 from sqlalchemy import select
 
 from studio.backend import ReconcileRequired, RemoteBackend
-from studio.packs import GENERATION_VERSION
 from studio.media import probe, render_film, scene_clip_count, shot_count
 from studio.models import Artifact, Installation, Job, JobEvent, Project, Scene, Source
-from studio.packs import PACK_ID, load_graph
+from studio.packs import GENERATION_VERSION, PACK_ID, load_graph
 from studio.schemas import JobInput, SceneInput
 from studio.service import canonical_hash
 
@@ -62,6 +61,10 @@ class StudioJobs:
         self.runs = ProductionRuns(self)
         from studio.runtime import RuntimeManager
         self.runtime = RuntimeManager(self)
+        from studio.cost_policy import CostPolicy
+        self.cost = CostPolicy(self)
+        if isinstance(self.backend, RemoteBackend):
+            self.backend.jobs = self
 
     def list(self, project_id=None, *, summary=False):
         """Newest 200 jobs. ``summary`` keeps only the snapshot fields list views show.
@@ -77,8 +80,9 @@ class StudioJobs:
         return [summarize_job(row) for row in rows] if summary else rows
 
     def assert_no_abandoned_remote(self, host_id):
+        from studio.cost_policy import result_settled
         with self.service.sessions() as session:
-            if any(self.remote_pending(j.result) for j in session.scalars(select(Job).where(
+            if any(self.remote_pending(j.result) and not result_settled(j.result) for j in session.scalars(select(Job).where(
                     Job.host_id == host_id, Job.status == 'abandoned'))):
                 raise ValueError('GPU cũ còn lượt đã bỏ với trạng thái remote chưa rõ; không gửi inference mới.')
 
@@ -387,6 +391,8 @@ class StudioJobs:
             if self.service.require(Job, job_id).kind != 'export':
                 task.cancel()
         await asyncio.gather(*tasks.values(), return_exceptions=True)
+        if hasattr(self.backend, 'close'):
+            await self.backend.close()
 
     def event(self, job_id, message, *, level='info', stage=None):
         with self.service.sessions() as session:
@@ -410,13 +416,27 @@ class StudioJobs:
 
     def checkpoint(self, job_id, stage, value):
         from sqlalchemy import text
+
+        from studio.cost_policy import remote_settled
         with self.service.sessions() as session:
             session.execute(text('BEGIN IMMEDIATE'))
             row = session.get(Job, job_id)
+            if value.get('state') == 'submitting' and row.status in {'cancelling', 'cancelled', 'abandoned'}:
+                raise asyncio.CancelledError()  # no intent or POST may cross a confirmed cancellation boundary
             if row.status == 'abandoned':
                 return
             submissions = dict(row.result.get('submissions', {}))
             old = submissions.get(stage, {})
+            if value.get('state') == 'submitting' and value.get('cost_policy', {}).get('wan_concurrency') == 2:
+                generation = value.get('process_generation')
+                if not generation:
+                    raise ValueError('Chưa xác minh PID Comfy; không chạy hai Wan.')
+                for other in session.scalars(select(Job).where(Job.host_id.in_(self.cost.siblings(row.host_id)))):
+                    for other_stage, intent in other.result.get('submissions', {}).items():
+                        if other.id == row.id and other_stage == stage:
+                            continue
+                        if not remote_settled(intent) and intent.get('process_generation') == generation:
+                            raise ValueError('Hai lane đang trỏ cùng tiến trình Comfy; không POST prompt thứ hai.')
             submissions[stage] = {**old, **value}
             if 'timing' in value:
                 submissions[stage]['timing'] = {**old.get('timing', {}), **value['timing']}
@@ -792,6 +812,7 @@ class StudioJobs:
             if job.kind == "export":
                 raise ValueError("Đang đóng gói phim local. Chờ hoàn tất để tránh để lại tiến trình FFmpeg.")
             self.patch(job_id, status="cancelling")
+            job = self.service.require(Job, job_id)  # include any intent committed before the cancellation fence
             try:
                 if self.remote_pending(job.result) and not job.result.get('submissions'):
                     raise ValueError('LLM/TTS remote chưa có xác nhận dừng; cần đối chiếu thủ công.')
@@ -835,6 +856,8 @@ class StudioJobs:
         while True:
             try:
                 self.runs.tick()
+                if hasattr(self.backend, 'sweep_resident'):
+                    await self.backend.sweep_resident()
             except Exception:  # a bad production tick must not kill the durable worker
                 logging.getLogger(__name__).exception('Production tick failed; worker continues.')
                 await asyncio.sleep(2)
@@ -847,23 +870,29 @@ class StudioJobs:
             await asyncio.sleep(.1 if started else .5)
 
     def dispatch(self):
+        from studio.cost_policy import result_settled
         from studio.gpu_memory import admits, gpu_key
         with self.service.sessions() as session:
             jobs = list(session.scalars(select(Job).where(Job.status == "queued").order_by(Job.created_at)))
             blocked = {}   # host_id -> kind of the job that holds it
             for j in session.scalars(select(Job).where(
                     Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned']))):
-                if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result):
+                if j.status in {'running', 'cancelling', 'reconciling'} or (self.remote_pending(j.result) and not result_settled(j.result)):
                     blocked.setdefault(j.host_id, j.kind)
         self._gpu_waiting.intersection_update(j.id for j in jobs)
         if not jobs:
             return 0
         with self.service.sessions() as session:
             busy = {}
+            active_rows = {}
             for id in self.active:
                 row = session.get(Job, id)
                 if row:
+                    active_rows[row.host_id] = row
                     busy[row.host_id] = row.kind
+                    if row.kind == 'benchmark':
+                        for h in row.snapshot.get('benchmark_hosts', []):
+                            busy[h] = row.kind
         # Different host IDs may be ComfyUI processes on the same physical GPU. A GPU admits jobs while their
         # VRAM budgets (image 30 GiB, anything else 48 GiB) fit; the first job on a GPU always starts.
         keys, sizes = {}, {}
@@ -893,7 +922,29 @@ class StudioJobs:
             current = list(running.get(key, [])) if key is not None else []
             if boundary_recovery and job.host_id in blocked and blocked[job.host_id] in current:
                 current.remove(blocked[job.host_id])   # the job continues on the lease it already holds
-            if key is not None and not admits(vram.get(key), current, job.kind):
+            allowed = admits(vram.get(key), current, job.kind)
+            if current and ('benchmark' in current or job.kind == 'benchmark'):
+                allowed = False
+            if job.host_id and job.kind == 'clip':
+                policy = self.cost.state(job.host_id)
+                if policy.get('fault'):
+                    allowed = False
+                elif 'clip' in current:
+                    evidence = policy.get('evidence') or {}
+                    allowed = bool(current == ['clip'] and
+                        self.cost.config(job)['wan_concurrency'] == 2 and
+                        all(self.cost.config(peer)['wan_concurrency'] == 2 for h, peer in active_rows.items()
+                            if keys.get(h) == key and peer.kind == 'clip') and
+                        evidence.get('fits_two') and vram.get(key) and
+                        evidence['two_process_budget_bytes'] <= vram[key] * 1024**3 * .9)
+                    # A fault/unresolved prompt on either lane owns the whole physical GPU.
+                    if any(keys.get(h) == key for h in blocked if h not in busy):
+                        allowed = False
+                if any(keys.get(h) == key for h in blocked if h not in busy and h != job.host_id):
+                    allowed = False
+            if job.host_id and job.kind != 'clip' and 'clip' in current and self.cost.state(job.host_id)['config']['wan_concurrency'] == 2:
+                allowed = False
+            if key is not None and not allowed:
                 if job.id not in self._gpu_waiting:
                     self.event(job.id, 'VRAM: chờ tiến trình khác trên cùng GPU cho đến khi đủ bộ nhớ trống.')
                     self._gpu_waiting.add(job.id)
@@ -904,6 +955,7 @@ class StudioJobs:
                 running[key] = [*current, job.kind]
             self.patch(job.id, status="running", error=None)
             self.active[job.id] = asyncio.create_task(self._run(job))
+            active_rows[job.host_id] = job
             started += 1
         return started
 
@@ -960,8 +1012,16 @@ class StudioJobs:
                 self.installations.patch(job.host_id, 'interrupted')
         except Exception as exc:  # noqa: BLE001 -- one failed job must not kill the durable worker
             message = str(exc) if isinstance(exc, ValueError) else "Tác vụ thất bại. Kiểm tra dịch vụ GPU, model và dung lượng ổ."
-            pending = self.remote_pending(self.service.require(Job, job.id).result)
-            self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review'} else "failed", error=message[:2000])
+            state = self.service.require(Job, job.id).result
+            pending = self.remote_pending(state)
+            if job.kind == 'benchmark':
+                from studio.benchmark import BenchmarkBudgetReached
+                from studio.cost_policy import result_settled
+                unresolved = not result_settled(state)
+                if isinstance(exc, BenchmarkBudgetReached) and not unresolved:
+                    self.patch(job.id, status='paused', error=message[:2000], result={**state, 'benchmark_budget_reached': True})
+                    return
+            self.patch(job.id, status="reconciling" if pending and job.kind in {'outline', 'script', 'speech', 'image_review', 'benchmark'} else "failed", error=message[:2000])
             if job.kind in {'install', 'verify'}:
                 self.installations.patch(job.host_id, 'install_failed' if job.kind == 'install' else 'verify_failed')
 

@@ -2,41 +2,42 @@ import asyncio
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from studio.importer import EXTENSIONS, import_file
 from studio.models import Artifact, Installation, Job, JobEvent, Project
 from studio.packs import pack_info
-from studio.thumbnail import video_thumbnail
 from studio.schemas import (
     Approval,
     BenchmarkInput,
     ChainFrameApproval,
     CharacterInput,
+    ClearRenderData,
     DialogueTestInput,
-    KnowledgeImportInput,
-    KnowledgePackInput,
-    VoiceAuditionInput,
+    GPUCostConfig,
     InstallConsent,
     JobInput,
     KeyframeBatchApproval,
-    ClearRenderData,
-    RegenerateKeyframes,
+    KnowledgeImportInput,
+    KnowledgePackInput,
     OutlineApproval,
     PendingClipConfig,
     ProductionInput,
     ProductionRunInput,
     ProjectInput,
+    RegenerateKeyframes,
     RuntimeConfig,
     SceneInput,
     SceneUpdate,
     ScriptProviderInput,
     SourceUpdate,
     TextSourceInput,
+    VoiceAuditionInput,
 )
+from studio.thumbnail import video_thumbnail
 
 
 class AbandonInput(BaseModel):
@@ -60,7 +61,7 @@ def router(service, jobs, host_lock):
 
     @api.get('/quality-policy')
     def quality_policy():
-        from studio.storyboard import QUALITY_STATUS, BENCHMARK_CASES
+        from studio.storyboard import BENCHMARK_CASES, QUALITY_STATUS
         return {'profiles': QUALITY_STATUS, 'benchmark_cases': BENCHMARK_CASES,
                 'gpu_acceptance': 'pending_visual_review', 'automatic_execution': False}
 
@@ -124,9 +125,10 @@ def router(service, jobs, host_lock):
                     if run.snapshot.get('host_id') in siblings or
                     siblings & set((run.consent or {}).get('parallel_host_ids') or [])]
         def unresolved(result):
+            from studio.cost_policy import remote_settled
             return bool(result.get('maintenance_pending') or result.get('speech_pending') or
                 result.get('outline_pending') or result.get('chapter_pending') is not None or
-                any(v.get('state') != 'downloaded' or not v.get('artifact_id')
+                any(not remote_settled(v)
                     for v in result.get('submissions', {}).values()))
         active = any(j.status in {'queued', 'running', 'cancelling', 'reconciling'} or
                      (j.status in {'paused', 'failed', 'interrupted', 'abandoned'} and unresolved(j.result))
@@ -136,14 +138,19 @@ def router(service, jobs, host_lock):
         if active:
             return {'state': 'busy', 'reason': 'Historia còn job hoặc prompt cần đối chiếu.'}
         try:
-            async with jobs.backend.connection(host_id) as (_, client):
-                response = await client.get('/queue', timeout=15)
-                response.raise_for_status()
-                queue = response.json()
+            for sibling in siblings:
+                if jobs.cost.state(sibling).get('fault'):
+                    return {'state': 'busy', 'reason': 'GPU còn khóa lỗi cần đối chiếu các tiến trình.'}
+                async with jobs.backend.connection(sibling) as (_, client):
+                    response = await client.get('/queue', timeout=15)
+                    response.raise_for_status()
+                    queue = response.json()
+                    if not all(isinstance(queue.get(k), list) for k in ('queue_running', 'queue_pending')):
+                        return {'state': 'unknown', 'reason': 'Queue ComfyUI thiếu dữ liệu; chưa xác minh Pod nhàn rỗi.'}
+                    if queue['queue_running'] or queue['queue_pending']:
+                        return {'state': 'busy', 'reason': 'Một tiến trình ComfyUI trên Pod còn prompt.'}
         except Exception:  # noqa: BLE001 -- read-only health check, never infer idleness
             return {'state': 'unknown', 'reason': 'Không đọc được queue ComfyUI; trạng thái Pod chưa xác minh.'}
-        if queue.get('queue_running') or queue.get('queue_pending'):
-            return {'state': 'busy', 'reason': 'Queue ComfyUI chưa rỗng.'}
         timestamps = [datetime.fromisoformat(value) for value in
                       [*(j.updated_at for j in rows), *(r.updated_at for r in runs)] if value]
         if not timestamps:
@@ -161,6 +168,18 @@ def router(service, jobs, host_lock):
     @api.get('/hosts/{id}/runtime')
     def runtime_state(id: str):
         return jobs.runtime.state(id)
+
+    @api.get('/hosts/{id}/cost-policy')
+    def cost_policy(id: str):
+        return jobs.cost.state(id)
+
+    @api.post('/hosts/{id}/cost-policy')
+    def apply_cost_policy(id: str, payload: GPUCostConfig):
+        return jobs.cost.apply(id, payload.model_dump())
+
+    @api.post('/hosts/{id}/cost-policy/reconcile')
+    async def reconcile_cost_policy(id: str):
+        return await jobs.cost.clear_fault(id)
 
     @api.post('/hosts/{id}/runtime/inspect')
     async def inspect_runtime(id: str):
@@ -341,6 +360,11 @@ def router(service, jobs, host_lock):
     def compare_benchmarks(baseline_id: str, candidate_id: str):
         from studio.benchmark import compare
         return compare(jobs, baseline_id, candidate_id)
+
+    @api.get('/benchmarks/compare-cost')
+    def compare_benchmark_cost(baseline_id: str, candidate_id: str):
+        from studio.benchmark import compare_cost
+        return compare_cost(jobs, baseline_id, candidate_id)
 
     @api.post('/projects/{id}/production-runs', status_code=201)
     def create_production_run(id: str, payload: ProductionRunInput):

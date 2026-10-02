@@ -112,7 +112,7 @@ def test_conservative_capacity(vram, limit):
 
 # An 80 GiB card renders two Wan clips one after the other but three images' worth of budget (2 here) at once.
 @pytest.mark.parametrize('vram,kind,expected', [(None, 'keyframe', 2), (80, 'clip', 2), (60, 'keyframe', 2),
-                                                (80, 'keyframe', 3), (96, 'keyframe', 3), (140, 'clip', 3)])
+                                                (80, 'keyframe', 3), (96, 'keyframe', 3), (140, 'clip', 2)])
 def test_dispatch_counts_physical_gpu_and_keeps_other_gpus_parallel(tmp_path, monkeypatch, vram, kind, expected):
     app = create_app(Settings(database_url=f'sqlite:///{tmp_path / "db"}', studio_root=tmp_path / 'data'),
                      SecretStore('memory'), lambda h, s: FakeExecutor())

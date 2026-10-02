@@ -10,6 +10,100 @@ Mở http://127.0.0.1:8000. API và UI dùng chung địa chỉ; 8765 là giao d
 Build UI: chạy `npm ci` rồi `npm run build` trong `ghm/frontend`.
 Dependency local khai báo trong `pyproject.toml`; không cần cài model AI lên Windows.
 
+## Giảm chi phí GPU — hồ sơ đo và giữ model (2026-10-02)
+
+Mặc định vẫn `model_residency=job`, `wan_concurrency=1`. Không thay đổi graph,
+độ phân giải, model, frames/fps, steps, seed, chia audio hay dependency identity.
+Hồ sơ lưu riêng theo GPU vật lý trong settings; không sửa snapshot hoặc xóa artifact.
+Các shot đã có intent/prompt ID tiếp tục qua history/queue của đúng lane ban đầu.
+
+- **Bộ AI & kiểm chứng → Chi phí GPU**: xem hồ sơ, số đo, chọn hai benchmark và
+  xác nhận đã xem phim mẫu trước khi lưu. Production Run phải pause ở ranh giới;
+  mọi lane phải không có job/prompt chưa đối chiếu. GET/poll/đổi tab không chạy GPU.
+- `stage` tái dùng kết nối, cache upload và model giữa job cùng công đoạn trên cùng
+  tiến trình Comfy, khi job/cảnh tiếp đã sẵn sàng. Giải phóng khi chuyển công đoạn,
+  pause/duyệt/lỗi đã xác nhận, kết thúc, hoặc sau tối đa 60 giây chưa lấy phiên tiếp.
+  Queue phải đọc được và rỗng trước `/free`; không dọn khi prompt chưa rõ trạng thái.
+  Reconnect/restart tiến trình hủy cache và đánh dấu shot đầu là ứng viên khởi động.
+- `2` chỉ dùng hai Comfy **khác PID** trên cùng GPU đã được chọn cho lượt sản xuất;
+  không tự mở GPU khác trong Pod. Thiếu hồ sơ phù hợp tiếp tục một Wan. Đo peak
+  theo PID, mỗi tiến trình cộng 10%, chừa ít nhất 10% GPU, tính cả VRAM của tiến trình
+  ngoài. Ví dụ 96 GiB chỉ cho hai peak tối đa khoảng 39,27 GiB mỗi tiến trình khi
+  không có bộ nhớ khác; ngân sách 48 GiB cũ không đủ. Đây là điều kiện bộ nhớ,
+  không phải bằng chứng GPU còn dư khả năng tính toán.
+- Khi lane lỗi/mất kết nối, khóa gửi shot mới trên GPU; peer tải/đối chiếu prompt
+  đang gửi trước khi dừng. **Đọc và đối chiếu hai tiến trình** chỉ GET queue/history,
+  không retry. History mất hoặc output chưa lưu giữ khóa. Hủy job benchmark kiểm
+  tra cả hai Comfy, chỉ interrupt prompt ID thuộc job; không đụng prompt ngoài.
+  POST chưa nhận được xác nhận và history còn thiếu không được coi là đã hủy chỉ
+  vì queue rỗng. Cancellation fence chặn intent mới và đọc lại ID vừa checkpoint.
+  Sau đối chiếu lỗi terminal, job chuyển interrupted để người dùng Resume rõ ràng.
+
+**Video → Nâng cao → Benchmark**: nhập giá thuê thực vào dự án từ Pod/console,
+chốt ngân sách USD và thời gian, rồi xác nhận chạy. Không tự thuê hay chạy benchmark.
+Có thể chọn host và `hourly_usd` riêng cho lượt đo (API `BenchmarkInput.host_id`,
+`hourly_usd`) để so GPU thay thế; không đổi GPU hoặc snapshot của phim đã pause.
+Giới hạn kiểm tra trước shot mới; prompt đã gửi vẫn được đối chiếu/tải nên có thể
+vượt giới hạn một shot, hoặc hai shot khi chạy hai lane. Tiền Pod chờ/storage tính
+riêng. Chạm giới hạn ở ranh giới an toàn chuyển benchmark sang paused; hủy job đã
+pause để tạo lượt đo ngân sách khác, các clip đã lưu vẫn giữ nguyên. Có thể đo khi
+Production Run/clip đã pause và mọi prompt đã kết thúc; không phải xóa phim đang dở.
+Lượt cũ chưa có trường benchmark mới vẫn tiếp tục theo snapshot cũ. Lượt đo có retry
+hoặc reconcile không được dùng để duyệt hồ sơ tối ưu; tiếp tục lượt đó chỉ để giữ
+output và đối chiếu, rồi chạy bộ đo sạch khi đã chốt ngân sách mới.
+
+Thứ tự đo: (1) baseline mặc định, (2) giữ model qua hai cảnh, (3) SageAttention,
+(4) SageAttention + highvram, (5) hai Wan khi baseline của chính runtime đó đủ VRAM,
+(6) một GPU thay thế. Mỗi runtime có lượt khởi động riêng; cùng input/seed và ít nhất
+5 shot nóng. UI chuẩn bị bộ 10 shot nóng; chọn hai cảnh sẽ có 5 shot/cảnh. Hai lane
+chia cùng bộ input, mỗi lane có 5 shot nóng; khi có hai cảnh mỗi lane đi qua cả hai
+để đo ranh giới. Startup samples được loại khỏi median nhưng có trong stage wall
+time/chi phí. Job chưa hoàn tất, OOM, đổi môi trường hoặc thiếu số đo không được duyệt.
+
+`GET /api/studio/benchmarks/compare-cost` so cùng bộ input/workflow và phiên bản
+Comfy/Torch/CUDA. Hai Wan cần clip/giờ tăng ≥20% và stage wall time giảm. Đổi GPU
+chỉ đề xuất khi không chậm hơn và chi phí xử lý giảm ≥20%, không tự đổi GPU. Chất
+lượng phải duyệt thủ công. Các cờ Sage/highvram ở Runtime dùng để thử nghiệm; không
+tự fallback. Comfy adopt vẫn chỉ kiểm tra/hướng dẫn, không tự cài hoặc restart.
+
+**Số đo**: một sampler read-only mỗi GPU vật lý, mỗi 2 giây qua `nvidia-smi`;
+gắn UUID GPU, PID Comfy và các prompt hoạt động. Lưu VRAM driver theo PID, tổng VRAM
+GPU, utilization GPU và RAM host. Đây là đỉnh lấy mẫu, không phải peak chính xác
+ở mọi thời điểm; N/A để trống. RAM host không phải RAM riêng của container. Comfy
+execution time chỉ lấy từ event có đúng prompt ID, không coi thời gian polling là
+GPU time, không cộng lại khi reconcile. Prepare/upload, wait, download, validation,
+storage, total và khoảng nghỉ lưu riêng. Comfy history chưa tách thời gian nạp model:
+`model_load_seconds=null`; báo cáo ghi chênh lệch shot ranh giới và shot nóng là
+**ước tính overhead**, không gọi đó là thời gian nạp model đã đo.
+
+Báo cáo `benchmark.json` có median, stage wall, clip/GPU-giờ, USD/phút phim,
+VRAM/RAM peak, chi phí xử lý và ngoại suy audio 300/326 giây theo tỷ lệ thời lượng
+từng cảnh (`sum(ceil(scene_audio / 5.0625))`). Thiếu audio của một cảnh thì chưa
+ngoại suy số shot. Khi hai clip chạy chồng, dùng thời gian GPU vật lý, không cộng
+hai thời gian shot để tính tiền thuê. ETA chỉ dùng cấu hình/runtime khớp; hồ sơ
+hai Wan đã duyệt dùng clip/giờ từ benchmark. Không tính thời gian duyệt/Pod chờ là
+thời gian inference; cảnh báo 10 phút nhàn rỗi đọc **mọi** queue trong Pod, hiện
+giá thực nếu đã nối RunPod và nút mở bảng Dừng. Storage có thể còn tính phí sau Stop.
+
+Runtime/model đã ghim tiếp tục dùng bộ cài hiện có. Đặt root và model trong
+`/workspace/historia` trên volume bền vững; giữ manifest/revision/checksum, kiểm tra
+lại sau khi chuyển Pod. Network volume có thể sống độc lập với Pod; so cả giá
+storage và thời gian đọc model trước khi chọn. Ghép phim vẫn chạy local. Không tự
+đổi storage, tạo cam kết thuê hoặc chuyển Serverless. Tham khảo
+[storage RunPod](https://docs.runpod.io/pods/storage/types),
+[billing RunPod](https://docs.runpod.io/pods/pricing) và
+[nvidia-smi](https://docs.nvidia.com/deploy/nvidia-smi/index.html).
+
+Chưa có số đo GPU thuê/đánh giá phim mẫu cho đợt này. Chưa công bố đạt 2× hay bật
+hồ sơ tối ưu mặc định. Nghiệm thu local dùng Comfy/driver giả lập và kiểm tra tiến
+trình Linux; không phát sinh tiền thuê GPU.
+Regression: **469 backend test** trên Linux/Python 3.12, gồm 35 ca hồ sơ GPU mới;
+43 Playwright E2E đã qua, chạy lại hai ca hồ sơ/ngân sách sau bổ sung chọn GPU.
+Kiểm thử checkpoint/transport trên Windows, Ruff các file thay đổi, frontend
+TypeScript/build/ESLint và diff-check đều qua. Starlette TestClient còn cảnh báo
+deprecation có sẵn. Sửa fixture token giả để tránh xác suất 1/256 vẫn trùng token
+gốc; không thay đổi cơ chế xác thực ứng dụng.
+
 ## Đã nối vào bản chạy
 
 - Giao diện dự án tiếng Việt; quản lý GPU cũ giữ ở mục riêng, API host/export-backend được bảo toàn.

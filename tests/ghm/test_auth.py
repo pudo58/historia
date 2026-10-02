@@ -42,7 +42,7 @@ def test_password_is_hashed_not_stored_plain(tmp_path):
         client.post("/api/auth/setup", json={"password": "correct horse"})
         stored = app.state.host_service.setting(auth.HASH_SETTING)
         assert stored.startswith("scrypt$") and "correct horse" not in stored
-        assert "correct horse" not in open(tmp_path / "db", "rb").read().decode("latin-1")
+        assert "correct horse" not in (tmp_path / "db").read_bytes().decode("latin-1")
 
 
 def test_brute_force_lockout(tmp_path):
@@ -74,7 +74,7 @@ def test_forged_and_expired_sessions_rejected(tmp_path, monkeypatch):
     with TestClient(app) as client:
         client.post("/api/auth/setup", json={"password": "correct horse"})
         token = client.cookies.get(auth.COOKIE)
-        client.cookies.set(auth.COOKIE, token[:-2] + "00")
+        client.cookies.set(auth.COOKIE, token[:-2] + ("ff" if token.endswith("00") else "00"))
         assert client.get("/api/hosts").status_code == 401
         client.cookies.set(auth.COOKIE, token)
         assert client.get("/api/hosts").status_code == 200

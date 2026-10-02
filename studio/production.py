@@ -8,10 +8,9 @@ from copy import deepcopy
 
 from sqlalchemy import select, text
 
-from studio.packs import GENERATION_VERSION
 from studio.media import probe
 from studio.models import Job, ProductionRun, Scene
-from studio.packs import load_graph
+from studio.packs import GENERATION_VERSION, load_graph
 from studio.schemas import SceneInput
 from studio.service import canonical_hash
 
@@ -484,6 +483,9 @@ class ProductionRuns:
             # VRAM holds); a Wan clip stays one process per physical GPU, exactly as before.
             siblings = self.lane_siblings(session, hosts)
             every = [*hosts, *siblings]
+            from studio.gpu_memory import gpu_key
+            approved_gpus = {gpu_key(h, self.jobs.installations.lane(h)) for h in hosts}
+            wan_hosts = [h for h in every if gpu_key(h, self.jobs.installations.lane(h)) in approved_gpus]
             clip_hosts = self.one_per_gpu(hosts)
             used = {j.host_id for j in remaining}
             dispatched = [j.id for j in remaining]
@@ -523,6 +525,8 @@ class ProductionRuns:
                         break
                     if fan_out:
                         usable = clip_hosts
+                        if kind == 'clip' and not local_clip:
+                            usable = self.jobs.cost.clip_lanes(wan_hosts, project, scene)
                         if kind == 'keyframe':
                             # The main Pod always qualifies; an extra Pod needs the image models proven on it.
                             usable = [h for h in every if h == project.get('host_id') or self.jobs.installations.component_proven(

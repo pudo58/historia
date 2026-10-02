@@ -308,5 +308,20 @@ class RuntimeConfig(StrictModel):
 
 class BenchmarkInput(StrictModel):
     scene_id: str
+    host_id: str | None = None
+    hourly_usd: float | None = Field(default=None, gt=0, le=100)
     warm_shots: int = Field(default=5, ge=5, le=20)
     max_wall_seconds: int = Field(ge=300, le=14400)
+    second_scene_id: str | None = None
+    model_residency: Literal['job', 'stage'] = 'job'
+    wan_concurrency: Literal[1, 2] = 1
+    memory_baseline_id: str | None = None
+    max_cost_usd: float | None = Field(default=None, gt=0, le=10000)
+
+
+class GPUCostConfig(StrictModel):
+    model_residency: Literal['job', 'stage'] = 'job'
+    wan_concurrency: Literal[1, 2] = 1
+    baseline_id: str | None = None
+    candidate_id: str | None = None
+    quality_review_passed: bool = False

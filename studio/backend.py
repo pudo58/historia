@@ -41,7 +41,7 @@ def comfy_failure_detail(status) -> str:
                 text = re.sub(r"\s+", " ", re.sub(r"(/[\w.@+-]+){2,}", "<path>", str(data.get("exception_message", ""))))[:240]
                 return f" Chi tiết từ ComfyUI: {kind or 'lỗi'} tại node {node or '?'}: {text}".rstrip(": ")
     except Exception:  # noqa: BLE001 -- diagnostics must never mask the original failure
-        pass
+        logging.getLogger(__name__).debug('Could not read optional Comfy failure details.')
     return ""
 
 def worker_failure(result):
@@ -76,6 +76,40 @@ class RemoteBackend:
     def __init__(self, hosts, service):
         self.hosts, self.service = hosts, service
         self._generation = ContextVar('comfy_generation_session', default=None)
+        self.jobs = None
+        self._resident = {}
+        from studio.gpu_telemetry import TelemetryPool
+        self.telemetry = TelemetryPool(self)
+
+    async def release_resident(self, host_id, *, free=True):
+        retained = self._resident.pop(host_id, None)
+        if retained is None:
+            return
+        timer = retained.get('timer')
+        if timer and timer is not asyncio.current_task():
+            timer.cancel()
+            await asyncio.gather(timer, return_exceptions=True)
+        try:
+            if free:
+                await self.release_idle_gpu(retained['client'], retained.get('log'))
+        finally:
+            await retained['stack'].aclose()
+
+    async def _expire_resident(self, host_id):
+        await asyncio.sleep(60)
+        await self.release_resident(host_id)
+
+    async def close(self):
+        await self.telemetry.close()
+        for host_id in list(self._resident):
+            await self.release_resident(host_id)
+
+    async def sweep_resident(self):
+        # Release promptly at review/pause/stage changes. Idle readiness is bounded
+        # by the 60-second timer even if the production scheduler stops advancing.
+        for host_id, state in list(self._resident.items()):
+            if not self.jobs.cost.next_ready(state['job']):
+                await self.release_resident(host_id)
 
     @asynccontextmanager
     async def generation_session(self, job):
@@ -83,20 +117,40 @@ class RemoteBackend:
         if current and current['job_id'] == job.id and current['host_id'] == job.host_id:
             yield
             return
-        async with AsyncExitStack() as stack:
-            state = {'job_id': job.id, 'host_id': job.host_id, 'stack': stack,
+        policy = self.jobs.cost.config(job) if self.jobs else {'model_residency': 'job', 'wan_concurrency': 1}
+        state = self._resident.pop(job.host_id, None)
+        if state:
+            state['timer'].cancel()
+            await asyncio.gather(state['timer'], return_exceptions=True)
+            if state['kind'] != getattr(job, 'kind', None) or policy['model_residency'] != 'stage':
+                await self.release_idle_gpu(state['client'], state.get('log'))
+                await state['stack'].aclose()
+                state = None
+        if state is None:
+            state = {'host_id': job.host_id, 'stack': AsyncExitStack(), 'kind': getattr(job, 'kind', None),
                      'uploads': {}, 'shots': 0, 'remote_settled': False}
-            token = self._generation.set(state)
-            try:
-                yield
-            finally:
+        state.update(job_id=job.id, job=job, cost_policy=policy)
+        token = self._generation.set(state)
+        successful = False
+        try:
+            yield
+            successful = True
+        finally:
+            self._generation.reset(token)
+            keep = (successful and state.get('client') is not None and state.get('remote_settled') and
+                    state['cost_policy']['model_residency'] == 'stage' and self.jobs and not self.jobs.closing and
+                    self.jobs.cost.next_ready(job))
+            if keep:
+                state['last_finished_at'] = time.monotonic()
+                self._resident[job.host_id] = state
+                state['timer'] = asyncio.create_task(self._expire_resident(job.host_id))
+            else:
                 try:
-                    # Keep weights between shots, release at completion/review/pause
-                    # or a confirmed remote error. Never write after ambiguous POST.
-                    if state.get('client') and state['remote_settled']:
+                    if state.get('client') is not None and state.get('remote_settled'):
                         await self.release_idle_gpu(state['client'], state.get('log'))
                 finally:
-                    self._generation.reset(token)
+                    await self.telemetry.unwatch(state.pop('telemetry_token', None))
+                    await state['stack'].aclose()
 
     @asynccontextmanager
     async def generation_connection(self, job):
@@ -249,6 +303,10 @@ print(json.dumps(data))
         started = time.monotonic()
         try:
             return await self._generate(job, name, prompt, images, seed, quality, log, checkpoint, stage, steps, shot)
+        except BaseException:
+            if self.jobs and job.host_id and self.jobs.cost.config(job)['wan_concurrency'] == 2:
+                self.jobs.cost.fault(job.host_id, job.id)
+            raise
         finally:
             # Accounting only: no request or retry is performed from this finally block.
             if self.service and hasattr(self.service, 'require'):
@@ -257,6 +315,11 @@ print(json.dumps(data))
                 if current:
                     total = current.get('timing', {}).get('total_seconds', 0)
                     checkpoint(stage, {'timing': {'total_seconds': total + time.monotonic() - started}})
+                    if self.jobs and name == 'wan_i2v' and current.get('state') == 'downloaded':
+                        try:
+                            self.jobs.cost.record_measurement(job.host_id, self.service.require(Job, job.id).result['submissions'][stage])
+                        except Exception:  # noqa: BLE001 -- optional metrics must not fail a downloaded render
+                            logging.getLogger(__name__).warning('Could not store optional GPU profile measurement.')
 
     async def _generate(self, job, name: str, prompt: str, images: list[Path],
                         seed: int, quality: str, log, checkpoint, stage: str, steps=None, shot=0) -> Path:
@@ -271,12 +334,16 @@ print(json.dumps(data))
         prompt_id = (prior or {}).get('prompt_id') or str(uuid5(UUID(job.id), stage))
         async with self.generation_connection(job) as (client, cache):
             cache['log'] = log
+            if prior:
+                cache['remote_settled'] = False  # before the first history/queue read can disconnect
             names = []
             if prior:
+                if prior.get('host_id') not in (None, job.host_id):
+                    raise ReconcileRequired('Prompt thuộc tiến trình Comfy khác. Giữ nguyên host và ID để đối chiếu.')
                 checkpoint(stage, {'attempts': prior.get('attempts', 1) + 1})
             timing = dict((prior or {}).get('timing', {}))
             duration = None
-            if name == 'wan_i2v' and job.snapshot.get('generation_version', 2) >= 3:
+            if name == 'wan_i2v' and job.kind != 'benchmark' and job.snapshot.get('generation_version', 2) >= 3:
                 duration = probe(self.service.artifact_path(job.snapshot['scene']['speech_id']))['duration']
             config = shot_config(job, stage, duration) if name == 'wan_i2v' else None
             history = await client.get(f"/history/{prompt_id}")
@@ -284,14 +351,28 @@ print(json.dumps(data))
             item = history.json().get(prompt_id)
             queue = await client.get("/queue")
             queue.raise_for_status()
+            if not isinstance(queue.json(), dict) or any(not isinstance(queue.json().get(k), list)
+                    for k in ('queue_running', 'queue_pending')):
+                raise ReconcileRequired('Queue ComfyUI chưa xác minh; không gửi lại hoặc dọn model.')
             queued = any(len(row) > 1 and row[1] == prompt_id for key in ["queue_running", "queue_pending"] for row in queue.json().get(key, []))
             if prior or queued:
                 cache['remote_settled'] = False
             if prompt_is_dead(prior, item, queued):
                 cache['remote_settled'] = True
+                checkpoint(stage, {'remote_terminal_state': 'error', 'remote_terminal_prompt_id': prompt_id})
+                if job.kind == 'benchmark' and job.snapshot.get('benchmark_remaining_wall_seconds', 1) <= 0:
+                    from studio.benchmark import BenchmarkBudgetReached
+                    raise BenchmarkBudgetReached('Đã chạm giới hạn benchmark; prompt cũ đã lỗi, không gửi lượt có phí mới.')
                 # ComfyUI still lists the earlier prompt as failed/interrupted. Re-reading it would fail
                 # forever, and it is finished, so sending a fresh prompt cannot duplicate a render.
-                prompt_id = str(uuid5(UUID(job.id), f"{stage}#{prior.get('attempts', 1)}"))
+                ordinal = prior.get('retry_ordinal', 0) + 1
+                replacement = str(uuid5(UUID(job.id), f"{stage}#{ordinal}"))
+                while replacement == prompt_id:
+                    ordinal += 1
+                    replacement = str(uuid5(UUID(job.id), f"{stage}#{ordinal}"))
+                checkpoint(stage, {'retry_ordinal': ordinal, 'failed_prompt_ids':
+                    [*prior.get('failed_prompt_ids', []), prompt_id]})
+                prompt_id = replacement
                 log("Prompt trước đã dừng." + comfy_failure_detail(item.get('status', {}))[:240] + " Gửi prompt mới thay vì đọc lại kết quả cũ.")
                 item, queued, prior = None, False, None
             if not item and not queued and prior and prior.get('state') in {'remote_completed', 'downloaded'} and prior.get('output'):
@@ -315,6 +396,23 @@ print(json.dumps(data))
                     cache['library_versions'] = await self.library_versions(cache.get('executor'), generation)
                     cache['versions_generation'] = generation
                 runtime = {**runtime, **cache.get('library_versions', {})}
+                physical = {}
+                sample = None
+                if cache.get('executor') is not None and self.hosts:
+                    try:
+                        from studio.gpu_telemetry import Window
+                        lane = json.loads(self.hosts.setting('host_lane:' + job.host_id) or '{}')
+                        sample = await self.telemetry.snapshot(cache['executor'])
+                        window = Window(int(generation.split(':')[0]) if generation and ':' in generation else None, prompt_id)
+                        gpu_index = lane.get('gpu', lane.get('index', self.hosts.options_for(job.host_id).gpu_index or 0))
+                        window.add(sample, gpu_index, [])
+                        physical = window.summary
+                    except Exception:  # noqa: BLE001 -- telemetry cannot change the render outcome
+                        physical = {'unavailable': True}
+                from studio.cost_policy import DEFAULT, capacity_graph_hash, fingerprint
+                policy = cache.get('cost_policy', dict(DEFAULT))
+                if cache.get('last_finished_at'):
+                    timing['inter_job_gap_seconds'] = time.monotonic() - cache.pop('last_finished_at')
                 for index, path in enumerate(images):
                     from studio.formats import resolve_format
                     fmt = resolve_format(quality, job.snapshot.get("project", {}))
@@ -356,14 +454,60 @@ print(json.dumps(data))
                     schema_response.raise_for_status()
                     cache['schema'] = schema_response.json()
                 graph = normalize_graph(graph, cache['schema'])
+                capacity_graph = capacity_graph_hash(graph)
+                capacity_id = fingerprint(config, runtime, physical, capacity_graph) if config else None
+                if cache.get('capacity_fingerprint') != capacity_id:
+                    cache['shots'] = 0
+                cache['capacity_fingerprint'] = capacity_id
+                if self.jobs and name == 'wan_i2v':
+                    saved = self.jobs.cost.state(job.host_id)
+                    if saved.get('fault'):
+                        raise ReconcileRequired('GPU đang khóa sau lỗi chạy song song. Đối chiếu từng prompt trước khi gửi shot mới.')
+                    if policy['wan_concurrency'] == 2:
+                        evidence = (job.snapshot.get('memory_evidence') if job.kind == 'benchmark' else saved.get('evidence')) or {}
+                        if not capacity_id or evidence.get('fingerprint') != capacity_id:
+                            raise ValueError('GPU/workflow/runtime chưa có hồ sơ VRAM khớp; không gửi hai Wan.')
+                        # Account for driver/foreign-process memory too. The
+                        # capacity profile reserves two Comfy peaks, not an
+                        # unrelated process's VRAM on the same card.
+                        from sqlalchemy import select
+
+                        from studio.gpu_telemetry import finite
+                        from studio.models import Job
+                        peer_hosts = set(job.snapshot.get('benchmark_hosts', []))
+                        with self.service.sessions() as session:
+                            peer_hosts.update(j.host_id for j in session.scalars(select(Job).where(
+                                Job.host_id.in_(self.jobs.cost.siblings(job.host_id)), Job.status == 'running', Job.kind == 'clip')))
+                        peer_hosts.discard(job.host_id)
+                        pids = {int(generation.split(':')[0])} if generation and ':' in generation else set()
+                        for peer in peer_hosts:
+                            peer_generation = await self.process_generation(cache.get('executor'), peer)
+                            if peer_generation and ':' in peer_generation:
+                                pids.add(int(peer_generation.split(':')[0]))
+                        gpu = next((g for g in (sample or {}).get('gpus', []) if g.get('uuid') == physical.get('gpu_uuid')), {})
+                        apps = [p for p in (sample or {}).get('processes', []) if p.get('uuid') == physical.get('gpu_uuid') and p.get('pid') in pids]
+                        if not finite(gpu.get('used_mib')) or any(not finite(p.get('used_mib')) for p in apps):
+                            raise ValueError('Chưa đo được bộ nhớ tiến trình khác trên GPU; không gửi hai Wan.')
+                        external = max(0, gpu['used_mib'] - sum(p['used_mib'] for p in apps)) * 1024**2
+                        if evidence['two_process_budget_bytes'] + external > physical['gpu_total_bytes'] * .9:
+                            raise ValueError('VRAM của tiến trình khác đang chiếm dự phòng GPU; chờ hoặc dừng việc đó trước khi thử hai Wan.')
+                    elif policy['model_residency'] == 'stage' and job.kind != 'benchmark' and (
+                            (saved.get('evidence') or {}).get('fingerprint') != capacity_id):
+                        policy = cache['cost_policy'] = dict(DEFAULT)
                 timing['prepare_upload_seconds'] = time.monotonic() - prepared
                 # Record before the network write: on an ambiguous response we only reconcile.
                 cache['remote_settled'] = False
                 checkpoint(stage, {"prompt_id": prompt_id, "state": "submitting",
                                    'config': config, 'graph_hash': canonical_hash(graph), 'runtime': runtime,
+                                   'capacity_fingerprint': capacity_id, 'telemetry': physical,
+                                   'capacity_graph_hash': capacity_graph,
+                                   'process_generation': generation, 'cost_policy': policy,
+                                   'host_id': job.host_id,
+                                   'submitted_at': time.time(),
                                    'cold_candidate': cache['shots'] == 0, 'timing': timing,
                                    'attempts': 1})
                 cache['shots'] += 1
+                cache['telemetry_token'] = await self.telemetry.watch(job, generation, prompt_id)
                 try:
                     response = await client.post("/prompt", json={"prompt": graph, "prompt_id": prompt_id, "client_id": job.id})
                     response.raise_for_status()
@@ -374,6 +518,9 @@ print(json.dumps(data))
                 checkpoint(stage, {"prompt_id": prompt_id, "state": "submitted"})
                 log(f"Đã gửi {stage}; đang chờ GPU xử lý.")
             waiting = time.monotonic()
+            if prior and 'telemetry_token' not in cache:
+                generation = await self.process_generation(cache.get('executor'), job.host_id)
+                cache['telemetry_token'] = await self.telemetry.watch(job, generation, prompt_id)
             deadline = time.monotonic() + 3600
             try:
                 while not item:
@@ -386,8 +533,17 @@ print(json.dumps(data))
             finally:
                 timing['remote_wait_seconds'] = timing.get('remote_wait_seconds', 0) + time.monotonic() - waiting
                 checkpoint(stage, {'timing': timing})
+                measured = await self.telemetry.unwatch(cache.pop('telemetry_token', None))
+                if measured.get('samples'):
+                    old = (prior or {}).get('telemetry', {})
+                    for key in ('process_peak_vram_bytes', 'gpu_peak_used_bytes', 'host_peak_ram_bytes'):
+                        if old.get(key) is not None:
+                            measured[key] = max(old[key], measured.get(key) or 0)
+                    checkpoint(stage, {'telemetry': measured})
             status = item.get("status", {})
             cache['remote_settled'] = status.get('status_str') in {'success', 'error'}
+            if status.get('status_str') == 'error':
+                checkpoint(stage, {'remote_terminal_state': 'error', 'remote_terminal_prompt_id': prompt_id})
             if status.get("status_str") != "success" or not status.get("completed"):
                 raise ValueError("ComfyUI xử lý thất bại. Có thể thiếu VRAM/model; không tự giảm chất lượng." +
                                  comfy_failure_detail(status))
@@ -410,6 +566,7 @@ print(json.dumps(data))
                 raise ValueError("Tên artifact trả về không an toàn.")
             target = target_dir / (stage + Path(filename).suffix)
             checkpoint(stage, {'prompt_id': prompt_id, 'state': 'remote_completed',
+                               'remote_completed_at': (prior or {}).get('remote_completed_at', time.time()),
                                'output': {k: output[k] for k in ('filename', 'subfolder', 'type') if k in output},
                                'timing': timing})
             part = target.with_suffix(target.suffix + ".part")
@@ -457,15 +614,30 @@ print(json.dumps(data))
                     image.verify()
             timing['validation_seconds'] = time.monotonic() - validation_started
             checkpoint(stage, {"prompt_id": prompt_id, "state": "downloaded", 'timing': timing})
+            cache['last_finished_at'] = time.monotonic()
             return target
 
     async def cancel(self, job) -> None:
+        host_ids = getattr(job, 'snapshot', {}).get('benchmark_hosts', [job.host_id])
+        if len(host_ids) > 1:
+            from types import SimpleNamespace
+            for host_id in host_ids:
+                clone = SimpleNamespace(id=getattr(job, 'id', None), host_id=host_id, snapshot={}, result=job.result)
+                await self.cancel(clone)
+            return
+        await self.release_resident(job.host_id, free=False)
         async with self.connection(job.host_id) as (_, client):
-            ids = {value["prompt_id"] for value in job.result.get("submissions", {}).values()}
+            submissions = {stage: s for stage, s in job.result.get('submissions', {}).items()
+                           if s.get('host_id', job.host_id) == job.host_id and s.get('prompt_id')}
+            ids = {s['prompt_id'] for s in submissions.values()}
             response = await client.get("/queue")
             response.raise_for_status()
             state = response.json()
+            if not isinstance(state, dict) or any(not isinstance(state.get(k), list)
+                    for k in ('queue_running', 'queue_pending')):
+                raise ReconcileRequired('Queue chưa xác minh; không đánh dấu prompt đã hủy.')
             running = {row[1] for row in state.get("queue_running", []) if len(row) > 1}
+            accepted = running | {row[1] for row in state['queue_pending'] if len(row) > 1}
             response = await client.post("/queue", json={"delete": sorted(ids)})
             response.raise_for_status()
             for prompt_id in running & ids:
@@ -475,8 +647,22 @@ print(json.dumps(data))
                 response = await client.get("/queue")
                 response.raise_for_status()
                 state = response.json()
+                if not isinstance(state, dict) or any(not isinstance(state.get(k), list)
+                        for k in ('queue_running', 'queue_pending')):
+                    raise ReconcileRequired('Queue chưa xác minh; không đánh dấu prompt đã hủy.')
                 present = {row[1] for key in ("queue_running", "queue_pending") for row in state.get(key, []) if len(row) > 1}
                 if not (present & ids):
+                    for submission in submissions.values():
+                        pid = submission['prompt_id']
+                        if submission.get('state') == 'submitting' and pid not in accepted:
+                            history = await client.get('/history/' + pid)
+                            history.raise_for_status()
+                            terminal = history.json().get(pid, {}).get('status', {}).get('status_str')
+                            if terminal not in {'success', 'error'}:
+                                raise ReconcileRequired('POST chưa có xác nhận và history còn thiếu; queue rỗng chưa chứng minh prompt đã hủy.')
+                    if self.jobs and getattr(job, 'id', None):
+                        for stage, submission in submissions.items():
+                            self.jobs.checkpoint(job.id, stage, {'cancel_confirmed_prompt_id': submission['prompt_id']})
                     await self.release_idle_gpu(client)
                     return
                 await asyncio.sleep(2)
@@ -532,6 +718,7 @@ print(json.dumps(data))
 
     async def _worker(self, job, mode: str, payload: dict, images: list[Path], log) -> dict:
         options = self.hosts.options_for(job.host_id)
+        await self.release_resident(job.host_id)
         async with self.connection(job.host_id) as (executor, client):
             await self.free_gpu(client)
             remote_dir = f"{options.root}/studio-jobs/{job.id}"

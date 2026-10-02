@@ -102,10 +102,32 @@ def performance(jobs, project_id, run_id=None):
             result['eta_seconds'] = result['estimated_remaining_usd'] = None
         # Wall-clock estimate when several Pods render different scenes at once. Processing
         # cost is unchanged (same GPU-seconds); each extra Pod is billed for its own rental.
+        from studio.gpu_memory import gpu_key
         from studio.production import parallel_hosts
-        gpus = 1 + (len(parallel_hosts(run)) if run else 0)
+        hosts = [h for h in [project.get('host_id'), *(parallel_hosts(run) if run else [])] if h]
+        groups = {gpu_key(h, jobs.installations.lane(h)): h for h in hosts}
+        gpus = max(1, len(groups))
         result['parallel_gpus'] = gpus
         result['wall_eta_seconds'] = result['eta_seconds'] / gpus if result['eta_seconds'] is not None else None
+        profiles = [{'host_id': h, **jobs.cost.state(h)} for h in groups.values()]
+        # A measured physical-GPU throughput already includes both lanes. Never
+        # divide a sum of overlapping shot times and call it rented GPU-hours.
+        dual = [p for p in profiles if p['config']['wan_concurrency'] == 2 and p.get('evidence') and not p.get('fault')]
+        if pending and len(dual) == len(profiles) and profiles:
+            compatible = all(all(c == p['evidence']['config'] and
+                all(r.get(k) == p['evidence']['runtime'].get(k) for k in ('comfy_version', 'torch_version', 'cuda_version', 'attention_backend', 'memory_policy'))
+                for p in dual) for c, r in pending)
+            if compatible:
+                reports = [service.require(Job, p['evidence']['candidate_id']).result['benchmark_report'] for p in dual]
+                throughput = sum(r['clips_per_gpu_hour'] for r in reports)
+                result['wall_eta_seconds'] = len(pending) / throughput * 3600
+                result['eta_seconds'] = result['wall_eta_seconds']
+                result['estimated_remaining_usd'] = result['wall_eta_seconds'] / 3600 * project['hourly_usd'] * gpus if project.get('hourly_usd') is not None else None
+                result['eta_basis'] = 'accepted_physical_gpu_throughput'
+        telemetry = [r.get('telemetry', {}) for r in records]
+        result['process_peak_vram_bytes'] = max((t['process_peak_vram_bytes'] for t in telemetry if t.get('process_peak_vram_bytes') is not None), default=None)
+        result['host_peak_ram_bytes'] = max((t['host_peak_ram_bytes'] for t in telemetry if t.get('host_peak_ram_bytes') is not None), default=None)
+        result['gpu_profiles'] = profiles
         return {**result, 'run_id': run.id if run else None, 'scenes': scenes,
                 'measured_audio_seconds': measured, 'shots': records,
                 'unmeasured_scenes': sum(s['shot_count'] is None for s in scenes)}

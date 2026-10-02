@@ -67,6 +67,7 @@ class RuntimeManager:
                                 'Comfy adopt: chủ dịch vụ tự cài/restart khi queue rỗng, rồi kiểm tra lại.'}
 
     def at_boundary(self, host_id, exclude_id=None, recover=False):
+        from studio.cost_policy import remote_settled
         from studio.jobs import ACTIVE
         with self.service.sessions() as session:
             for job in session.scalars(select(Job).where(Job.host_id == host_id)):
@@ -78,11 +79,12 @@ class RuntimeManager:
                     return False
                 if (job.result.get('maintenance_pending') or job.result.get('speech_pending') or
                         job.result.get('outline_pending') or job.result.get('chapter_pending') is not None or
-                        any(v.get('state') != 'downloaded' for v in job.result.get('submissions', {}).values())):
+                        any(not remote_settled(v) for v in job.result.get('submissions', {}).values())):
                     return False
         return True
 
     def start(self, host_id, config, action='apply'):
+        from studio.cost_policy import remote_settled
         from studio.jobs import ACTIVE
         options = self.hosts.options_for(host_id)
         if options.adopt_existing:
@@ -98,7 +100,7 @@ class RuntimeManager:
                 unresolved = job.status != 'completed' and (job.result.get('speech_pending') or
                     job.result.get('maintenance_pending') or
                     job.result.get('outline_pending') or job.result.get('chapter_pending') is not None or
-                    any(v.get('state') != 'downloaded' for v in job.result.get('submissions', {}).values()))
+                    any(not remote_settled(v) for v in job.result.get('submissions', {}).values()))
                 if (job.status in ACTIVE and job.status != 'paused') or unresolved:
                     raise ValueError('Tạm dừng ở ranh giới shot và đối chiếu GPU trước khi đổi runtime.')
             self.jobs.recipes.assert_recipes_idle(host_id)
