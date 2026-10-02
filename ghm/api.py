@@ -478,11 +478,12 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
         gpus = max(gpus, (seen.count if seen and seen.count else 0), 1)
         physical = gpus if payload.all_gpus else 1
         if payload.per_gpu > 1:
+            from studio.gpu_memory import GPU_HEADROOM_GIB, PROCESS_VRAM_GIB, process_limit
             vram = seen.vram_gb if seen and seen.vram_gb else None
-            # A running image or Wan stage can peak near 28 GB per ComfyUI process; refuse a count that cannot fit.
-            if vram is not None and vram < 28 * payload.per_gpu:
-                raise HTTPException(422, f"GPU {vram:g} GB VRAM chỉ đủ cho {max(1, int(vram // 28))} tiến trình ComfyUI mỗi GPU "
-                                         f"(mỗi tiến trình cần khoảng 28 GB lúc cao điểm). Chọn số nhỏ hơn.")
+            if vram is not None and payload.per_gpu > process_limit(vram):
+                raise HTTPException(422, f"GPU {vram:g} GiB VRAM được giới hạn {process_limit(vram)} tiến trình ComfyUI mỗi GPU "
+                                         f"(ngân sách {PROCESS_VRAM_GIB} GiB/tiến trình, chừa {GPU_HEADROOM_GIB} GiB; "
+                                         "đây là mức dự phòng, chưa phải đỉnh VRAM đo được). Chọn số nhỏ hơn.")
             if vram is None:
                 raise HTTPException(409, "Chưa biết VRAM của GPU. Bấm \"Kiểm tra máy\" cho Pod này trước khi chạy nhiều tiến trình mỗi GPU.")
         lanes = await ensure_lanes(pod_id, first, physical * payload.per_gpu, pod["name"] or pod_id,

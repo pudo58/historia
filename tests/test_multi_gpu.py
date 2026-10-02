@@ -259,7 +259,7 @@ def test_several_processes_per_gpu_need_known_and_sufficient_vram(client):
 
 def test_processes_sharing_a_gpu_become_lanes_pinned_to_that_gpu(client, monkeypatch):
     first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
-    _preflight(client, first, 80)
+    _preflight(client, first, 140)
     over = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 3})
     assert over.status_code == 422 and '2 tiến trình' in over.json()['detail']
     lanes = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
@@ -281,7 +281,7 @@ def test_install_options_of_a_second_process_on_gpu_zero(client, monkeypatch):
     from studio.models import Installation
     from studio.packs import PACK_ID
     first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
-    _preflight(client, first, 80)
+    _preflight(client, first, 140)
     lanes = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
     hosts, installs = client.app.state.host_service, client.app.state.studio_jobs.installations
     for lane in lanes[1:]:

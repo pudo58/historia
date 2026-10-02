@@ -341,6 +341,9 @@ class ComfyMock:
         if path == '/view':
             self.viewed.append(dict(request.url.params))
             return httpx.Response(503 if self.download_error else 200, content=b'video')
+        if path == '/free':
+            assert json.loads(request.content) == {'unload_models': True, 'free_memory': True}
+            return httpx.Response(200)
         raise AssertionError(path)
 
     async def generate(self, index=0):
@@ -355,15 +358,37 @@ async def test_connection_upload_schema_cache_and_reconnect(local, monkeypatch):
     async with mock.backend.generation_session(mock.job):
         await mock.generate(0)
         await mock.generate(1)
+        assert ('POST', '/free') not in mock.calls
         Image.new('RGB', (32, 32), 'blue').save(mock.image)
         await mock.generate(2)
     assert mock.connections == mock.closed == 1
     assert mock.calls.count(('POST', '/upload/image')) == 2
     assert mock.calls.count(('GET', '/object_info')) == 1
+    assert mock.calls.count(('POST', '/free')) == 1
     await mock.generate(3)
     assert mock.connections == mock.closed == 2
     assert mock.calls.count(('POST', '/upload/image')) == 3
     assert mock.calls.count(('GET', '/object_info')) == 2
+    assert mock.calls.count(('POST', '/free')) == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmed_remote_oom_releases_idle_process(local, monkeypatch):
+    mock = ComfyMock(local, monkeypatch)
+    response = mock.response
+    def failed(request):
+        result = response(request)
+        if request.url.path.startswith('/history/') and result.json():
+            id = request.url.path.rsplit('/', 1)[-1]
+            return httpx.Response(200, json={id: {'status': {'status_str': 'error', 'completed': False,
+                'messages': [['execution_error', {'exception_type': 'torch.OutOfMemoryError',
+                    'node_type': 'KSampler', 'exception_message': 'out of memory'}]]}}})
+        return result
+    mock.response = failed
+    with pytest.raises(ValueError, match='OutOfMemoryError'):
+        await mock.generate()
+    assert mock.calls.count(('POST', '/prompt')) == 1
+    assert mock.calls.count(('POST', '/free')) == 1
 
 
 @pytest.mark.asyncio
@@ -420,7 +445,7 @@ async def test_reconcile_uses_persisted_prompt_id(local, monkeypatch):
     mock.submitted['historical-id'] = {}
     await mock.generate()
     assert ('GET', '/history/historical-id') in mock.calls
-    assert not any(method == 'POST' for method, _ in mock.calls)
+    assert not any(method == 'POST' and path != '/free' for method, path in mock.calls)
     assert mock.service.require(Job, mock.job.id).result['submissions']['clip-0']['prompt_id'] == 'historical-id'
 
 

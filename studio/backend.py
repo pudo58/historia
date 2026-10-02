@@ -1,6 +1,7 @@
 """Pinned ComfyUI transport. Persist prompt intent before POST to prevent duplicate renders."""
 import asyncio
 import json
+import logging
 import re
 import shlex
 import time
@@ -78,13 +79,24 @@ class RemoteBackend:
 
     @asynccontextmanager
     async def generation_session(self, job):
+        current = self._generation.get()
+        if current and current['job_id'] == job.id and current['host_id'] == job.host_id:
+            yield
+            return
         async with AsyncExitStack() as stack:
-            token = self._generation.set({'job_id': job.id, 'host_id': job.host_id,
-                                          'stack': stack, 'uploads': {}, 'shots': 0})
+            state = {'job_id': job.id, 'host_id': job.host_id, 'stack': stack,
+                     'uploads': {}, 'shots': 0, 'remote_settled': False}
+            token = self._generation.set(state)
             try:
                 yield
             finally:
-                self._generation.reset(token)
+                try:
+                    # Keep weights between shots, release at completion/review/pause
+                    # or a confirmed remote error. Never write after ambiguous POST.
+                    if state.get('client') and state['remote_settled']:
+                        await self.release_idle_gpu(state['client'], state.get('log'))
+                finally:
+                    self._generation.reset(token)
 
     @asynccontextmanager
     async def generation_connection(self, job):
@@ -187,11 +199,50 @@ print(json.dumps(data))
             await executor.close()
 
     async def free_gpu(self, client: httpx.AsyncClient) -> None:
-        queue = (await client.get("/queue")).json()
+        response = await client.get("/queue")
+        response.raise_for_status()
+        queue = response.json()
+        if not isinstance(queue, dict) or any(not isinstance(queue.get(key), list)
+                for key in ('queue_running', 'queue_pending')):
+            raise ValueError('Chưa xác nhận queue ComfyUI đã rỗng.')
         if queue.get("queue_running") or queue.get("queue_pending"):
             raise ValueError("ComfyUI đang có job khác. Không giải phóng model hoặc chiếm GPU.")
         response = await client.post("/free", json={"unload_models": True, "free_memory": True})
         response.raise_for_status()
+
+    async def release_idle_gpu(self, client, log=None):
+        """Best-effort cleanup must not mask a render result or its original error.
+
+        /free is asynchronous. Observe this process's allocator, rather than
+        waiting for the whole GPU to become empty while another lane renders.
+        """
+        def report(message):
+            try:
+                if log:
+                    log(message)
+                else:
+                    logging.getLogger(__name__).info(message)
+            except Exception:  # noqa: BLE001 -- logging must not discard finished media
+                logging.getLogger(__name__).warning('Could not record GPU cleanup log.')
+        try:
+            await self.free_gpu(client)
+            report('VRAM: đã gửi yêu cầu dỡ model và giải phóng cache của tiến trình đã rảnh.')
+            for _ in range(10):
+                await asyncio.sleep(.5)
+                response = await client.get('/system_stats')
+                response.raise_for_status()
+                devices = response.json().get('devices') or []
+                reserved = devices[0].get('torch_vram_total') if devices else None
+                if reserved is None:
+                    return  # Older/custom servers have no allocator evidence.
+                if reserved <= 256 * 1024**2:
+                    report(f'VRAM: bộ nhớ PyTorch còn giữ của tiến trình là {reserved / 1024**2:.0f} MiB.')
+                    return
+            report('VRAM: đã yêu cầu dọn nhưng tiến trình vẫn giữ bộ nhớ; kiểm tra dịch vụ GPU nếu VRAM không giảm.')
+        except ValueError:
+            report('VRAM: chưa dọn vì queue ComfyUI đang có công việc hoặc phản hồi chưa hợp lệ.')
+        except Exception:  # noqa: BLE001 -- preserve inference outcome, hide transport secrets
+            report('VRAM: chưa xác nhận được việc dọn bộ nhớ do mất liên lạc với ComfyUI.')
 
     async def generate(self, job, name: str, prompt: str, images: list[Path],
                        seed: int, quality: str, log, checkpoint, stage: str, steps=None, shot=0) -> Path:
@@ -219,6 +270,7 @@ print(json.dumps(data))
         prior = job.result.get("submissions", {}).get(stage)
         prompt_id = (prior or {}).get('prompt_id') or str(uuid5(UUID(job.id), stage))
         async with self.generation_connection(job) as (client, cache):
+            cache['log'] = log
             names = []
             if prior:
                 checkpoint(stage, {'attempts': prior.get('attempts', 1) + 1})
@@ -233,7 +285,10 @@ print(json.dumps(data))
             queue = await client.get("/queue")
             queue.raise_for_status()
             queued = any(len(row) > 1 and row[1] == prompt_id for key in ["queue_running", "queue_pending"] for row in queue.json().get(key, []))
+            if prior or queued:
+                cache['remote_settled'] = False
             if prompt_is_dead(prior, item, queued):
+                cache['remote_settled'] = True
                 # ComfyUI still lists the earlier prompt as failed/interrupted. Re-reading it would fail
                 # forever, and it is finished, so sending a fresh prompt cannot duplicate a render.
                 prompt_id = str(uuid5(UUID(job.id), f"{stage}#{prior.get('attempts', 1)}"))
@@ -303,6 +358,7 @@ print(json.dumps(data))
                 graph = normalize_graph(graph, cache['schema'])
                 timing['prepare_upload_seconds'] = time.monotonic() - prepared
                 # Record before the network write: on an ambiguous response we only reconcile.
+                cache['remote_settled'] = False
                 checkpoint(stage, {"prompt_id": prompt_id, "state": "submitting",
                                    'config': config, 'graph_hash': canonical_hash(graph), 'runtime': runtime,
                                    'cold_candidate': cache['shots'] == 0, 'timing': timing,
@@ -331,6 +387,7 @@ print(json.dumps(data))
                 timing['remote_wait_seconds'] = timing.get('remote_wait_seconds', 0) + time.monotonic() - waiting
                 checkpoint(stage, {'timing': timing})
             status = item.get("status", {})
+            cache['remote_settled'] = status.get('status_str') in {'success', 'error'}
             if status.get("status_str") != "success" or not status.get("completed"):
                 raise ValueError("ComfyUI xử lý thất bại. Có thể thiếu VRAM/model; không tự giảm chất lượng." +
                                  comfy_failure_detail(status))
@@ -420,6 +477,7 @@ print(json.dumps(data))
                 state = response.json()
                 present = {row[1] for key in ("queue_running", "queue_pending") for row in state.get(key, []) if len(row) > 1}
                 if not (present & ids):
+                    await self.release_idle_gpu(client)
                     return
                 await asyncio.sleep(2)
             raise ReconcileRequired("Chưa xác nhận prompt đã dừng; giữ GPU ở trạng thái cần đối chiếu.")
