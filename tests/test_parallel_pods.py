@@ -282,3 +282,42 @@ def test_lost_contact_leaves_the_technical_reason_in_the_job_log(setup):
     from studio.models import JobEvent
     with service.sessions() as session:
         assert any(e.message == detail for e in session.query(JobEvent).filter_by(job_id=job.id))
+
+
+def pod_lanes(service, jobs, main, gpus):
+    """The main host plus one more ComfyUI process per entry of ``gpus`` (the GPU it shares), all on one Pod."""
+    import json
+    ids = [main, *(add_host(service, f'lane{n}') for n in range(len(gpus)))]
+    for i, hid in enumerate(ids):
+        gpu = 0 if i == 0 else gpus[i-1]
+        jobs.hosts.save_setting(f'host_lane:{hid}', json.dumps({'pod_id': 'pod', 'first': main, 'index': i, 'gpu': gpu,
+                                                               'instance': 0 if gpu != 0 or i == 0 else i}))
+    jobs.hosts.save_setting('runpod_pod_lanes:pod', json.dumps(ids))
+    return ids
+
+
+def test_images_use_every_process_of_the_pod_but_a_clip_takes_one_per_gpu(setup):
+    _client, service, jobs, project, scenes, main, _extra, request = setup
+    ids = pod_lanes(service, jobs, main, [0, 0])         # three processes sharing GPU 0, nothing ticked as parallel
+    run = jobs.runs.create(project['id'], request([]))
+    for _ in range(12):
+        jobs.runs.tick()
+        batch = active(service, run['id'])
+        if batch[0].kind != 'speech':
+            break
+        for job in batch:
+            complete(service, jobs, job.id)
+    batch = active(service, run['id'])
+    assert [j.kind for j in batch] == ['keyframe'] * 3 and {j.host_id for j in batch} == set(ids)
+    through_keyframes(service, jobs, run['id'])
+    (clip,) = active(service, run['id'])                  # one GPU: one Wan clip at a time, on the main process
+    assert clip.kind == 'clip' and clip.host_id == main
+
+
+def test_clips_still_use_each_physical_gpu_once(setup):
+    _client, service, jobs, project, scenes, main, _extra, request = setup
+    ids = pod_lanes(service, jobs, main, [0, 1])         # lane1 shares GPU 0, lane2 is GPU 1
+    run = jobs.runs.create(project['id'], request([ids[1], ids[2]]))   # clips still need the extra hosts to be ticked
+    through_keyframes(service, jobs, run['id'])
+    clips = active(service, run['id'])
+    assert [j.kind for j in clips] == ['clip', 'clip'] and {j.host_id for j in clips} == {ids[0], ids[2]}

@@ -847,20 +847,27 @@ class StudioJobs:
             await asyncio.sleep(.1 if started else .5)
 
     def dispatch(self):
-        from studio.gpu_memory import gpu_key, process_limit
+        from studio.gpu_memory import admits, gpu_key
         with self.service.sessions() as session:
             jobs = list(session.scalars(select(Job).where(Job.status == "queued").order_by(Job.created_at)))
-            blocked = {j.host_id for j in session.scalars(select(Job).where(
-                Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned'])))
-                if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result)}
+            blocked = {}   # host_id -> kind of the job that holds it
+            for j in session.scalars(select(Job).where(
+                    Job.status.in_(['running', 'cancelling', 'reconciling', 'paused', 'failed', 'interrupted', 'abandoned']))):
+                if j.status in {'running', 'cancelling', 'reconciling'} or self.remote_pending(j.result):
+                    blocked.setdefault(j.host_id, j.kind)
         self._gpu_waiting.intersection_update(j.id for j in jobs)
         if not jobs:
             return 0
         with self.service.sessions() as session:
-            busy = {session.get(Job, id).host_id for id in self.active if session.get(Job, id)}
-        # Different host IDs may be ComfyUI processes on the same physical GPU.
-        keys, limits = {}, {}
-        for host_id in {j.host_id for j in jobs} | busy | blocked:
+            busy = {}
+            for id in self.active:
+                row = session.get(Job, id)
+                if row:
+                    busy[row.host_id] = row.kind
+        # Different host IDs may be ComfyUI processes on the same physical GPU. A GPU admits jobs while their
+        # VRAM budgets (image 30 GiB, anything else 48 GiB) fit; the first job on a GPU always starts.
+        keys, sizes = {}, {}
+        for host_id in {j.host_id for j in jobs} | set(busy) | set(blocked):
             if host_id is None:
                 continue
             lane = self.installations.lane(host_id)
@@ -868,13 +875,12 @@ class StudioJobs:
             report = self.hosts.latest_preflight(host_id)
             if (not report or not report.gpu) and lane:
                 report = self.hosts.latest_preflight(lane['first'])
-            capacity = process_limit(report.gpu.vram_gb if report and report.gpu else None)
-            limits[key] = min(limits.get(key, capacity), capacity)
-        used = {}
-        for host_id in busy | blocked:
+            sizes.setdefault(key, []).append(report.gpu.vram_gb if report and report.gpu else None)
+        vram = {key: (min(v) if all(isinstance(x, (int, float)) for x in v) else None) for key, v in sizes.items()}
+        running = {}
+        for host_id in set(busy) | set(blocked):
             if host_id in keys:
-                key = keys[host_id]
-                used[key] = used.get(key, 0) + 1
+                running.setdefault(keys[host_id], []).append(busy.get(host_id) or blocked[host_id])
         started = 0
         for job in jobs:
             if job.host_id in busy:
@@ -884,16 +890,18 @@ class StudioJobs:
             if job.host_id in blocked and not boundary_recovery:
                 continue
             key = keys.get(job.host_id)
-            own_lease = int(boundary_recovery and job.host_id in blocked)
-            if key is not None and used.get(key, 0) - own_lease >= limits[key]:
+            current = list(running.get(key, [])) if key is not None else []
+            if boundary_recovery and job.host_id in blocked and blocked[job.host_id] in current:
+                current.remove(blocked[job.host_id])   # the job continues on the lease it already holds
+            if key is not None and not admits(vram.get(key), current, job.kind):
                 if job.id not in self._gpu_waiting:
-                    self.event(job.id, f'VRAM: chờ tiến trình khác trên cùng GPU; giới hạn {limits[key]} tác vụ đồng thời.')
+                    self.event(job.id, 'VRAM: chờ tiến trình khác trên cùng GPU cho đến khi đủ bộ nhớ trống.')
                     self._gpu_waiting.add(job.id)
                 continue
             self._gpu_waiting.discard(job.id)
-            busy.add(job.host_id)
+            busy[job.host_id] = job.kind
             if key is not None:
-                used[key] = used.get(key, 0) + 1 - own_lease
+                running[key] = [*current, job.kind]
             self.patch(job.id, status="running", error=None)
             self.active[job.id] = asyncio.create_task(self._run(job))
             started += 1

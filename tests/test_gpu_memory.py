@@ -110,8 +110,10 @@ def test_conservative_capacity(vram, limit):
     assert process_limit(vram) == limit
 
 
-@pytest.mark.parametrize('vram,expected', [(None, 2), (80, 2), (140, 3)])
-def test_dispatch_counts_physical_gpu_and_keeps_other_gpus_parallel(tmp_path, monkeypatch, vram, expected):
+# An 80 GiB card renders two Wan clips one after the other but three images' worth of budget (2 here) at once.
+@pytest.mark.parametrize('vram,kind,expected', [(None, 'keyframe', 2), (80, 'clip', 2), (60, 'keyframe', 2),
+                                                (80, 'keyframe', 3), (96, 'keyframe', 3), (140, 'clip', 3)])
+def test_dispatch_counts_physical_gpu_and_keeps_other_gpus_parallel(tmp_path, monkeypatch, vram, kind, expected):
     app = create_app(Settings(database_url=f'sqlite:///{tmp_path / "db"}', studio_root=tmp_path / 'data'),
                      SecretStore('memory'), lambda h, s: FakeExecutor())
     service, jobs, hosts = app.state.studio, app.state.studio_jobs, app.state.host_service
@@ -126,7 +128,7 @@ def test_dispatch_counts_physical_gpu_and_keeps_other_gpus_parallel(tmp_path, mo
             if vram:
                 session.add(PreflightSnapshot(host_id=host.id, status='pass', payload=json.dumps({
                     'status': 'pass', 'checks': [], 'gpu': {'name': 'A100', 'vram_gb': vram, 'driver_version': '580'}})))
-            job = Job(project_id=project['id'], host_id=host.id, kind='keyframe', input_hash=str(gpu), snapshot={})
+            job = Job(project_id=project['id'], host_id=host.id, kind=kind, input_hash=str(gpu), snapshot={})
             session.add(job)
             session.flush()
             ids.append(job.id)
@@ -154,3 +156,14 @@ def test_dispatch_counts_physical_gpu_and_keeps_other_gpus_parallel(tmp_path, mo
     with service.sessions() as session:
         waits = list(session.query(JobEvent).filter(JobEvent.job_id == ids[1]))
     assert len(waits) == (1 if expected == 2 else 0)
+
+
+def test_image_budget_leaves_room_for_more_images_but_a_clip_keeps_the_gpu_to_itself():
+    from studio.gpu_memory import admits, image_process_limit
+    assert image_process_limit(95.59) == 3 and image_process_limit(48) == 1 and image_process_limit(24) == 1 and image_process_limit(None) == 1
+    assert admits(95.59, ['keyframe', 'keyframe'], 'keyframe')             # 3 images = 90 of 91.6 GiB
+    assert not admits(95.59, ['keyframe', 'keyframe', 'keyframe'], 'keyframe')
+    assert not admits(95.59, ['clip'], 'clip')                              # two Wan clips never share this card
+    assert admits(95.59, ['clip'], 'keyframe')                              # but one image fits beside a clip
+    assert not admits(95.59, ['clip', 'keyframe'], 'keyframe')
+    assert admits(None, [], 'clip') and not admits(None, ['keyframe'], 'keyframe')   # unknown capacity: one at a time

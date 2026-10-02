@@ -259,9 +259,9 @@ def test_several_processes_per_gpu_need_known_and_sufficient_vram(client):
 
 def test_processes_sharing_a_gpu_become_lanes_pinned_to_that_gpu(client, monkeypatch):
     first = client.post('/api/runpod/pods/duo/connect').json()['host']['id']
-    _preflight(client, first, 140)
-    over = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 3})
-    assert over.status_code == 422 and '2 tiến trình' in over.json()['detail']
+    _preflight(client, first, 100)
+    over = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 4})
+    assert over.status_code == 422 and '3 tiến trình' in over.json()['detail']
     lanes = client.post('/api/runpod/pods/duo/connect', json={'all_gpus': True, 'per_gpu': 2}).json()['lanes']
     assert [h['label'] for h in lanes] == ['two-a100', 'two-a100 · GPU 1', 'two-a100 · GPU 0 · tiến trình 2',
                                            'two-a100 · GPU 1 · tiến trình 2']
@@ -306,3 +306,15 @@ def test_options_saved_before_shared_gpus_still_match():
     assert options.model_dump() == old_snapshot_options
     assert HostOptions(root='/workspace/historia', gpu_index=0, instance=1).model_dump()['instance'] == 1
     assert HostOptions.model_validate_json(options.model_dump_json()).model_dump() == options.model_dump()
+
+
+def test_automatic_process_count_follows_the_vram_of_the_gpu(client):
+    first = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 0}).json()
+    assert first['per_gpu'] == 1 and len(first['lanes'] if 'lanes' in first else [1]) == 1   # VRAM unknown: never a guess
+    _preflight(client, first['host']['id'], 95.59)
+    pods = client.get('/api/runpod/pods').json()['pods']
+    assert [p['auto_per_gpu'] for p in pods if p['id'] == 'duo'] == [3] and [p['vram_gb'] for p in pods if p['id'] == 'duo'] == [95.59]
+    auto = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 0}).json()
+    assert auto['per_gpu'] == 3 and len(auto['lanes']) == 3
+    both = client.post('/api/runpod/pods/duo/connect', json={'per_gpu': 0, 'all_gpus': True}).json()
+    assert len(both['lanes']) == 6

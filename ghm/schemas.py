@@ -22,7 +22,8 @@ class RunPodConnect(BaseModel):
     all_gpus: bool = False
     # Extra ComfyUI processes on each GPU (needs the VRAM): a lone image spends most of its time uploading,
     # waiting and downloading, so several processes keep the GPU busy.
-    per_gpu: int = Field(default=1, ge=1, le=4)
+    # 0 = automatic: as many image-sized processes as the GPU's VRAM holds (1 when VRAM is not known yet).
+    per_gpu: int = Field(default=1, ge=0, le=4)
 
 
 class RunPodAction(BaseModel):

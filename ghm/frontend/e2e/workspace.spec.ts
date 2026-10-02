@@ -443,6 +443,24 @@ test('a fully linked Pod can add ComfyUI processes per GPU',async({page})=>{
   expect(bodies).toMatchObject([{all_gpus:true,per_gpu:4}]);
 });
 
+test('automatic mode adds as many image processes as the GPU VRAM holds',async({page})=>{
+  await fixture(page);
+  const pod={id:'pod',name:'orca',status:'RUNNING',gpu:'RTX PRO 6000',gpu_count:1,gpu_count_known:true,vram_gb:95.59,auto_per_gpu:3,vcpu:16,memory_gb:200,cost_per_hr:2.19,uptime_seconds:600,session_cost:.7,
+    host_label:'orca',host_id:'a',ssh_ready:true,linked_host_id:'a',host_ids:['a'],lanes:[{host_id:'a',label:'orca',index:0}]};
+  await page.route('**/api/runpod/pods',route=>route.fulfill({json:{configured:true,pods:[pod],running_count:1,running_cost_per_hr:2.19,ssh_key_path:'/k'}}));
+  await page.route('**/api/hosts',route=>route.fulfill({json:[]}));
+  const bodies:unknown[]=[];
+  await page.route('**/api/runpod/pods/pod/connect',route=>{bodies.push(route.request().postDataJSON());return route.fulfill({status:422,json:{detail:'dừng ở đây'}});});
+  await page.goto('/?page=gpu');
+  await expect(page.getByLabel('Số tiến trình ComfyUI mỗi GPU')).toHaveValue('0');
+  const add=page.getByRole('button',{name:'Thêm tiến trình (đủ 3 máy)'});
+  await expect(add).toBeVisible();
+  await add.click();
+  await expect(page.getByText('dừng ở đây')).toBeVisible();
+  expect(bodies).toMatchObject([{per_gpu:0}]);
+});
+
+
 test('saved Hugging Face token is shown once and not asked again',async({page})=>{
   const state=await fixture(page);
   let configured=true;

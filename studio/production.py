@@ -97,6 +97,28 @@ class ProductionRuns:
     def __init__(self, jobs):
         self.jobs, self.service = jobs, jobs.service
 
+    def lane_siblings(self, session, hosts):
+        """Other Historia hosts (ComfyUI processes) of the Pods that ``hosts`` belong to."""
+        from ghm.models import Host
+        found = []
+        for host_id in hosts:
+            lane = self.jobs.installations.lane(host_id) if host_id else None
+            for other in (self.jobs.installations.lanes_of(lane['pod_id']) if lane and lane.get('pod_id') else []):
+                if other not in hosts and other not in found and session.get(Host, other) is not None:
+                    found.append(other)
+        return found
+
+    def one_per_gpu(self, hosts):
+        """The first host of each physical GPU: Wan clips never run two to a GPU."""
+        from studio.gpu_memory import gpu_key
+        seen, kept = set(), []
+        for host_id in hosts:
+            key = gpu_key(host_id, self.jobs.installations.lane(host_id) if host_id else None)
+            if host_id is None or key not in seen:
+                seen.add(key)
+                kept.append(host_id)
+        return kept
+
     def list(self, project_id):
         self.service.project(project_id)
         with self.service.sessions() as session:
@@ -458,6 +480,11 @@ class ProductionRuns:
                 scene.update(cp['media'].get(scene['id'], {}))
             from ghm.models import Host
             hosts = [project.get('host_id'), *(h for h in parallel_hosts(run) if session.get(Host, h) is not None)]
+            # Images use every installed ComfyUI process of the Pods already in use (the GPU admits as many as its
+            # VRAM holds); a Wan clip stays one process per physical GPU, exactly as before.
+            siblings = self.lane_siblings(session, hosts)
+            every = [*hosts, *siblings]
+            clip_hosts = self.one_per_gpu(hosts)
             used = {j.host_id for j in remaining}
             dispatched = [j.id for j in remaining]
             stages = ('speech', 'keyframe', 'clip', 'rife', 'export') if project.get('frame_interpolation') == 'rife24' else ('speech', 'keyframe', 'clip', 'export')
@@ -495,10 +522,10 @@ class ProductionRuns:
                         pending = True
                         break
                     if fan_out:
-                        usable = hosts
+                        usable = clip_hosts
                         if kind == 'keyframe':
                             # The main Pod always qualifies; an extra Pod needs the image models proven on it.
-                            usable = [h for h in hosts if h == project.get('host_id') or self.jobs.installations.component_proven(
+                            usable = [h for h in every if h == project.get('host_id') or self.jobs.installations.component_proven(
                                 h, ['qwen_image', *(['qwen_edit'] if scene.get('reference_ids') or scene.get('character_ids') else [])])]
                         lane = None if local_clip else next((h for h in usable if h not in used), False)
                         if lane is False or (local_clip and None in used):
@@ -521,7 +548,7 @@ class ProductionRuns:
                         'inputs': dependency_identity(scene_project, scene, kind), 'workflow': workflow}
                     hashed = canonical_hash({**identity, 'host': clip_host if kind != 'export' else None})
                     # A keyframe or clip already finished on any Pod of this run is reused, not re-rendered.
-                    candidates = [hashed, *(canonical_hash({**identity, 'host': h}) for h in hosts
+                    candidates = [hashed, *(canonical_hash({**identity, 'host': h}) for h in every
                                             if kind in {'clip', 'keyframe'} and not local_clip and h != clip_host)]
                     existing = session.scalar(select(Job).where(Job.input_hash.in_(candidates), Job.status == 'completed').order_by(Job.created_at.desc()))
                     from studio.generation import clip_output_matches

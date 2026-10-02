@@ -397,6 +397,9 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             pod["gpu_count_known"] = bool(pod["gpu_count"] or (seen and seen.count))
             pod["gpu_count"] = pod["gpu_count"] or (seen.count if seen else None)
             pod["gpu"] = pod["gpu"] or (seen.name if seen else None)
+            from studio.gpu_memory import image_process_limit
+            pod["vram_gb"] = seen.vram_gb if seen and seen.vram_gb else None
+            pod["auto_per_gpu"] = min(4, image_process_limit(pod["vram_gb"])) if pod["vram_gb"] else None
         return {"configured": True, "ssh_key_path": service.setting("runpod_ssh_key_path") or "", **summary}
 
     def normalize_key_path(raw: str) -> str:
@@ -477,18 +480,21 @@ def create_app(settings: Settings | None = None, secret_store: SecretStore | Non
             seen = ssh_gpu([first])
         gpus = max(gpus, (seen.count if seen and seen.count else 0), 1)
         physical = gpus if payload.all_gpus else 1
-        if payload.per_gpu > 1:
-            from studio.gpu_memory import GPU_HEADROOM_GIB, PROCESS_VRAM_GIB, process_limit
-            vram = seen.vram_gb if seen and seen.vram_gb else None
-            if vram is not None and payload.per_gpu > process_limit(vram):
-                raise HTTPException(422, f"GPU {vram:g} GiB VRAM được giới hạn {process_limit(vram)} tiến trình ComfyUI mỗi GPU "
-                                         f"(ngân sách {PROCESS_VRAM_GIB} GiB/tiến trình, chừa {GPU_HEADROOM_GIB} GiB; "
-                                         "đây là mức dự phòng, chưa phải đỉnh VRAM đo được). Chọn số nhỏ hơn.")
+        from studio.gpu_memory import GPU_HEADROOM_GIB, IMAGE_VRAM_GIB, image_process_limit
+        vram = seen.vram_gb if seen and seen.vram_gb else None
+        per_gpu = payload.per_gpu
+        if per_gpu == 0:
+            per_gpu = min(4, image_process_limit(vram))   # unknown VRAM -> one process, never a guess
+        elif per_gpu > 1:
+            if vram is not None and per_gpu > image_process_limit(vram):
+                raise HTTPException(422, f"GPU {vram:g} GiB VRAM chỉ đủ {image_process_limit(vram)} tiến trình ảnh mỗi GPU "
+                                         f"(ngân sách {IMAGE_VRAM_GIB} GiB/tiến trình ảnh, chừa {GPU_HEADROOM_GIB} GiB). Chọn số nhỏ hơn hoặc Tự động.")
             if vram is None:
-                raise HTTPException(409, "Chưa biết VRAM của GPU. Bấm \"Kiểm tra máy\" cho Pod này trước khi chạy nhiều tiến trình mỗi GPU.")
-        lanes = await ensure_lanes(pod_id, first, physical * payload.per_gpu, pod["name"] or pod_id,
+                raise HTTPException(409, "Chưa biết VRAM của GPU. Bấm \"Kiểm tra máy\" cho Pod này trước khi chạy nhiều tiến trình mỗi GPU, hoặc chọn Tự động.")
+        lanes = await ensure_lanes(pod_id, first, physical * per_gpu, pod["name"] or pod_id,
                                    (address, port, username), key_path, physical)
         return {"host": _to_read(service._require_host(first), service), "action": action,
+                "per_gpu": per_gpu,
                 "lanes": [_to_read(service._require_host(hid), service) for hid in lanes]}
 
     async def ensure_lanes(pod_id: str, first: str, wanted: int, base_label: str, endpoint, key_path: str,
